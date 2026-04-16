@@ -14,3 +14,6 @@ checkpoints/
 build/
 dist/
 .DS_Store
+
+.el_state_repro/
+report-run.md

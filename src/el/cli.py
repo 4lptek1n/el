@@ -1,16 +1,26 @@
 """el CLI entrypoint.
 
-Commands:
+Usage:
 
-    el "<free-text command>"     execute a command
-    el seed [--from-bundled]     bootstrap skill registry from seed data
-    el demo [--all|--name N]     run curated demos
-    el stats                     show registry stats
-    el events [--kind K]         show recent events
-    el daemon                    run autonomous maintenance loop
-    el parse "<text>"            show how the parser interprets a command
-    el rate up|down              reinforce the last executed skill
-    el export-training           dump training rows for the transformer
+    el "<free-text command>"      execute a command directly
+    el --daemon                   run autonomous maintenance loop
+    el --daemon --iterations 10   bounded daemon run (for CI/tests)
+
+Subcommands:
+
+    el run "<text>"               explicit form of the default command
+    el seed [--from-bundled]      bootstrap registry from seed data
+    el demo [--all|--name N]      run curated demos
+    el stats                      show registry stats
+    el events [--kind K]          show recent events
+    el daemon                     explicit form of --daemon
+    el parse "<text>"             show how the parser interprets a command
+    el rate up|down               reinforce (or weaken) the last executed skill
+    el verbs                      list grammar verbs
+    el export-training            dump training rows for the transformer
+
+The first positional argument that is not a known subcommand is treated as
+a command string, so `el "list this folder"` works without `run`.
 """
 from __future__ import annotations
 
@@ -33,12 +43,35 @@ from .selfplay import SelfPlayRunner
 from .seed.bootstrap import seed_registry
 
 
-@click.group(context_settings={"help_option_names": ["-h", "--help"]})
+_SUBCOMMAND_NAMES: set[str] = set()
+
+
+class ElGroup(click.Group):
+    """Group that treats an unknown first positional as a free-text command."""
+
+    def resolve_command(self, ctx: click.Context, args: list[str]):  # type: ignore[override]
+        if args and args[0] not in _SUBCOMMAND_NAMES and not args[0].startswith("-"):
+            args = ["run", *args]
+        return super().resolve_command(ctx, args)
+
+
+@click.group(cls=ElGroup, context_settings={"help_option_names": ["-h", "--help"]}, invoke_without_command=True)
 @click.option("--state-dir", type=click.Path(), default=None, help="State directory (defaults to $EL_STATE_DIR or ~/.el_state).")
 @click.option("--offline", is_flag=True, help="Disable network primitives.")
 @click.option("--yes", is_flag=True, help="Auto-confirm destructive actions.")
+@click.option("--daemon", "as_daemon", is_flag=True, help="Run the autonomous maintenance loop.")
+@click.option("--iterations", type=int, default=None, help="Bounded daemon iterations (with --daemon).")
+@click.option("--tick", type=float, default=5.0, help="Daemon tick seconds (with --daemon).")
 @click.pass_context
-def main(ctx: click.Context, state_dir: str | None, offline: bool, yes: bool) -> None:
+def main(
+    ctx: click.Context,
+    state_dir: str | None,
+    offline: bool,
+    yes: bool,
+    as_daemon: bool,
+    iterations: int | None,
+    tick: float,
+) -> None:
     """el — an LLM-free PC agent with dual-memory architecture."""
     overrides: dict[str, Any] = {"offline": offline}
     if state_dir:
@@ -48,6 +81,17 @@ def main(ctx: click.Context, state_dir: str | None, offline: bool, yes: bool) ->
     ctx.ensure_object(dict)
     ctx.obj["config"] = config
     ctx.obj["auto_confirm"] = yes
+
+    if as_daemon:
+        executor = _build_executor(ctx)
+        daemon = Daemon(executor=executor, tick_seconds=tick)
+        daemon._on_event = lambda kind, payload: click.echo(f"[daemon] {kind} {json.dumps(payload, default=str)}")
+        ran = daemon.run(max_iterations=iterations)
+        click.echo(f"[daemon] exited after {ran} tick(s)")
+        ctx.exit(0)
+
+    if ctx.invoked_subcommand is None:
+        click.echo(ctx.get_help())
 
 
 @main.command("run")
@@ -136,6 +180,27 @@ def cli_daemon(ctx: click.Context, iterations: int | None, tick: float) -> None:
     click.echo(f"[daemon] exited after {ran} tick(s)")
 
 
+@main.command("rate")
+@click.argument("direction", type=click.Choice(["up", "down"]))
+@click.pass_context
+def cli_rate(ctx: click.Context, direction: str) -> None:
+    """Reinforce or weaken the most recently executed skill."""
+    config = ctx.obj["config"]
+    registry = SkillRegistry(config.registry_path)
+    last_path = Path(config.state_dir) / "last_run.json"
+    if not last_path.exists():
+        click.echo(json.dumps({"ok": False, "error": "no previous run to rate"}))
+        ctx.exit(1)
+    info = json.loads(last_path.read_text(encoding="utf-8"))
+    skill_id = info.get("skill_id")
+    if not skill_id:
+        click.echo(json.dumps({"ok": False, "error": "last run had no skill match"}))
+        ctx.exit(1)
+    updated = registry.reinforce(skill_id, success=(direction == "up"))
+    registry.log_event("user_rating", {"skill_id": skill_id, "direction": direction, "new_weight": updated.weight})
+    click.echo(json.dumps({"ok": True, "skill_id": skill_id, "direction": direction, "weight": updated.weight}))
+
+
 @main.command("demo")
 @click.option("--all", "run_all", is_flag=True, help="Run the full demo suite.")
 @click.option("--name", "single", default=None, help="Run a single demo by name.")
@@ -179,7 +244,7 @@ def cli_demo(
         report = {"demos": []}
         for d in demos:
             if offline and d.online:
-                report["demos"].append({"name": d.name, "status": "skipped", "duration_ms": 0, "reward": 0.0})
+                report["demos"].append({"name": d.name, "status": "skipped", "duration_ms": 0, "reward": 0.0, "origin": "offline"})
                 if not json_out:
                     click.echo(f"[skip-online] {d.name}")
                 continue
@@ -187,7 +252,7 @@ def cli_demo(
             t0 = time.monotonic()
             result = executor.handle(d.command)
             dt = int((time.monotonic() - t0) * 1000)
-            status = "ok" if result.reward >= 0.5 or result.origin in {"registry", "selfplay", "transformer"} else "fail"
+            status = "ok" if result.origin in {"registry", "selfplay", "transformer"} else "fail"
             report["demos"].append(
                 {
                     "name": d.name,
@@ -226,8 +291,26 @@ def _build_executor(ctx: click.Context) -> Executor:
 
 
 def _run_command(ctx: click.Context, raw: str) -> None:
+    config = ctx.obj["config"]
     executor = _build_executor(ctx)
     result = executor.handle(raw)
+    try:
+        last_path = Path(config.state_dir) / "last_run.json"
+        last_path.write_text(
+            json.dumps(
+                {
+                    "raw": raw,
+                    "ts": time.time(),
+                    "skill_id": result.skill.id if result.skill else None,
+                    "reward": result.reward,
+                    "origin": result.origin,
+                },
+                ensure_ascii=False,
+            ),
+            encoding="utf-8",
+        )
+    except Exception:
+        pass
     click.echo(
         json.dumps(
             {
@@ -246,6 +329,10 @@ def _run_command(ctx: click.Context, raw: str) -> None:
     )
     if result.origin == "no_plan":
         sys.exit(2)
+
+
+for _name in ("run", "parse", "seed", "stats", "events", "verbs", "export-training", "daemon", "rate", "demo"):
+    _SUBCOMMAND_NAMES.add(_name)
 
 
 if __name__ == "__main__":

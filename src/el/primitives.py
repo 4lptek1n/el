@@ -61,8 +61,35 @@ def _timed(fn: Callable[[], PrimResult]) -> PrimResult:
     return r
 
 
-def sh(cmd: str, *, timeout: float = 30.0, cwd: str | None = None) -> PrimResult:
+DANGEROUS_SH_TOKENS: tuple[str, ...] = (
+    "rm -rf", "rm -fr", "rm -r ", " rm ", "mkfs", "dd if=", "dd of=",
+    ":(){ :|:& };:", "shutdown", "reboot", " halt",
+    "pip install", "pip3 install", "conda install", "apt-get install",
+    "apt install", "brew install", "npm install -g", "curl | sh",
+    "curl | bash", "wget | sh", "wget | bash", "chmod -R 777", "chown -R",
+    "> /dev/sda", "mv /", "sudo ",
+)
+
+
+def sh_looks_dangerous(cmd: str) -> bool:
+    c = " " + cmd.lower() + " "
+    return any(tok in c for tok in DANGEROUS_SH_TOKENS)
+
+
+def sh_looks_networked(cmd: str) -> bool:
+    c = cmd.lower()
+    return any(tok in c for tok in ("curl ", "wget ", "git clone ", "git pull", "git fetch", "git push", "pip install", "npm install", "yarn install", "pnpm install"))
+
+
+def sh(cmd: str, *, timeout: float = 30.0, cwd: str | None = None, confirmed: bool = False) -> PrimResult:
     def run() -> PrimResult:
+        if sh_looks_dangerous(cmd) and not confirmed:
+            return PrimResult(
+                name="sh",
+                ok=False,
+                duration_ms=0,
+                error=f"refusing destructive shell: {cmd!r}; pass confirmed=True or --yes",
+            )
         proc = subprocess.run(
             cmd,
             shell=True,
@@ -78,6 +105,57 @@ def sh(cmd: str, *, timeout: float = 30.0, cwd: str | None = None) -> PrimResult
             stdout=proc.stdout,
             stderr=proc.stderr,
             data={"returncode": proc.returncode, "cmd": cmd},
+        )
+    return _timed(run)
+
+
+def sh_spawn(cmd: str, *, cwd: str | None = None) -> PrimResult:
+    """Start a background subprocess and return its pid without waiting."""
+    def run() -> PrimResult:
+        if sh_looks_dangerous(cmd):
+            return PrimResult(name="sh_spawn", ok=False, duration_ms=0, error="refused destructive")
+        proc = subprocess.Popen(
+            cmd, shell=True, cwd=cwd,
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+            start_new_session=True,
+        )
+        return PrimResult(name="sh_spawn", ok=True, duration_ms=0, data={"pid": proc.pid, "cmd": cmd})
+    return _timed(run)
+
+
+def process_kill(pid: int, *, confirmed: bool = False) -> PrimResult:
+    def run() -> PrimResult:
+        if not confirmed:
+            return PrimResult(name="process_kill", ok=False, duration_ms=0, error="confirmation required")
+        try:
+            os.kill(int(pid), 15)
+            return PrimResult(name="process_kill", ok=True, duration_ms=0, data={"pid": int(pid), "signal": 15})
+        except ProcessLookupError:
+            return PrimResult(name="process_kill", ok=True, duration_ms=0, data={"pid": int(pid), "already_gone": True})
+    return _timed(run)
+
+
+def which(binary: str) -> PrimResult:
+    def run() -> PrimResult:
+        loc = shutil.which(binary)
+        return PrimResult(name="which", ok=loc is not None, duration_ms=0, stdout=loc or "", data={"path": loc})
+    return _timed(run)
+
+
+def pip_install(package: str, *, confirmed: bool = False, timeout: float = 300.0) -> PrimResult:
+    def run() -> PrimResult:
+        if not confirmed:
+            return PrimResult(name="pip_install", ok=False, duration_ms=0, error="confirmation required")
+        proc = subprocess.run(
+            ["pip", "install", package],
+            capture_output=True, text=True, timeout=timeout,
+        )
+        return PrimResult(
+            name="pip_install",
+            ok=proc.returncode == 0,
+            duration_ms=0,
+            stdout=proc.stdout[-2000:], stderr=proc.stderr[-2000:],
+            data={"package": package, "returncode": proc.returncode},
         )
     return _timed(run)
 
@@ -391,8 +469,253 @@ def noop() -> PrimResult:
     return PrimResult(name="noop", ok=True, duration_ms=0)
 
 
+def http_post(url: str, body: str = "", *, timeout: float = 15.0, content_type: str = "application/json") -> PrimResult:
+    def run() -> PrimResult:
+        req = urlrequest.Request(url, data=body.encode("utf-8"), method="POST", headers={"Content-Type": content_type, "User-Agent": "el/0.1"})
+        try:
+            with urlrequest.urlopen(req, timeout=timeout) as resp:
+                data = resp.read(1_000_000).decode("utf-8", errors="replace")
+                return PrimResult(name="http_post", ok=True, duration_ms=0, stdout=data, data={"status": resp.status, "url": url})
+        except urlerror.HTTPError as exc:
+            return PrimResult(name="http_post", ok=False, duration_ms=0, error=f"HTTP {exc.code}")
+        except Exception as exc:
+            return PrimResult(name="http_post", ok=False, duration_ms=0, error=str(exc))
+    return _timed(run)
+
+
+def clipboard_read() -> PrimResult:
+    def run() -> PrimResult:
+        for cmd in (["xclip", "-selection", "clipboard", "-o"], ["pbpaste"], ["wl-paste"]):
+            if shutil.which(cmd[0]):
+                try:
+                    out = subprocess.run(cmd, capture_output=True, text=True, timeout=3)
+                    if out.returncode == 0:
+                        return PrimResult(name="clipboard_read", ok=True, duration_ms=0, stdout=out.stdout, data={"len": len(out.stdout)})
+                except Exception:
+                    continue
+        return PrimResult(name="clipboard_read", ok=False, duration_ms=0, error="no clipboard backend")
+    return _timed(run)
+
+
+def env_set(key: str, value: str) -> PrimResult:
+    def run() -> PrimResult:
+        os.environ[key] = value
+        return PrimResult(name="env_set", ok=True, duration_ms=0, data={"key": key})
+    return _timed(run)
+
+
+def env_list(*, prefix: str | None = None) -> PrimResult:
+    def run() -> PrimResult:
+        keys = [k for k in os.environ if (prefix is None or k.startswith(prefix))]
+        keys.sort()
+        return PrimResult(name="env_list", ok=True, duration_ms=0, data=keys)
+    return _timed(run)
+
+
+def hash_file(path: str, *, algo: str = "sha256") -> PrimResult:
+    import hashlib
+
+    def run() -> PrimResult:
+        p = Path(path).expanduser()
+        if not p.exists():
+            return PrimResult(name="hash_file", ok=False, duration_ms=0, error=f"missing: {p}")
+        h = hashlib.new(algo)
+        with p.open("rb") as fh:
+            for chunk in iter(lambda: fh.read(65536), b""):
+                h.update(chunk)
+        digest = h.hexdigest()
+        return PrimResult(name="hash_file", ok=True, duration_ms=0, stdout=digest, data={"algo": algo, "digest": digest})
+    return _timed(run)
+
+
+def b64_encode(text: str) -> PrimResult:
+    import base64
+
+    def run() -> PrimResult:
+        out = base64.b64encode(text.encode("utf-8")).decode("ascii")
+        return PrimResult(name="b64_encode", ok=True, duration_ms=0, stdout=out)
+    return _timed(run)
+
+
+def b64_decode(text: str) -> PrimResult:
+    import base64
+
+    def run() -> PrimResult:
+        try:
+            out = base64.b64decode(text.encode("ascii")).decode("utf-8", errors="replace")
+            return PrimResult(name="b64_decode", ok=True, duration_ms=0, stdout=out)
+        except Exception as exc:
+            return PrimResult(name="b64_decode", ok=False, duration_ms=0, error=str(exc))
+    return _timed(run)
+
+
+def regex_match(text: str, pattern: str) -> PrimResult:
+    import re
+
+    def run() -> PrimResult:
+        try:
+            matches = re.findall(pattern, text)
+            return PrimResult(name="regex_match", ok=True, duration_ms=0, stdout="\n".join(str(m) for m in matches[:200]), data={"count": len(matches)})
+        except re.error as exc:
+            return PrimResult(name="regex_match", ok=False, duration_ms=0, error=str(exc))
+    return _timed(run)
+
+
+def json_parse(text: str) -> PrimResult:
+    def run() -> PrimResult:
+        try:
+            data = json.loads(text)
+            return PrimResult(name="json_parse", ok=True, duration_ms=0, data=data)
+        except Exception as exc:
+            return PrimResult(name="json_parse", ok=False, duration_ms=0, error=str(exc))
+    return _timed(run)
+
+
+def csv_parse(path: str, *, max_rows: int = 500) -> PrimResult:
+    import csv
+
+    def run() -> PrimResult:
+        p = Path(path).expanduser()
+        if not p.exists():
+            return PrimResult(name="csv_parse", ok=False, duration_ms=0, error=f"missing: {p}")
+        with p.open("r", encoding="utf-8", newline="") as fh:
+            reader = csv.reader(fh)
+            rows = []
+            for i, row in enumerate(reader):
+                if i >= max_rows:
+                    break
+                rows.append(row)
+        return PrimResult(name="csv_parse", ok=True, duration_ms=0, data={"rows": rows, "count": len(rows)})
+    return _timed(run)
+
+
+def archive_create(src: str, dst: str, *, fmt: str = "zip") -> PrimResult:
+    def run() -> PrimResult:
+        s = Path(src).expanduser()
+        base = Path(dst).expanduser()
+        archived = shutil.make_archive(str(base), fmt, root_dir=str(s.parent), base_dir=str(s.name))
+        return PrimResult(name="archive_create", ok=True, duration_ms=0, data={"archive": archived})
+    return _timed(run)
+
+
+def archive_extract(src: str, dst: str) -> PrimResult:
+    def run() -> PrimResult:
+        s = Path(src).expanduser()
+        d = Path(dst).expanduser()
+        d.mkdir(parents=True, exist_ok=True)
+        shutil.unpack_archive(str(s), str(d))
+        return PrimResult(name="archive_extract", ok=True, duration_ms=0, data={"dst": str(d)})
+    return _timed(run)
+
+
+def ffmpeg_probe(path: str, *, timeout: float = 15.0) -> PrimResult:
+    def run() -> PrimResult:
+        if shutil.which("ffprobe") is None:
+            return PrimResult(name="ffmpeg_probe", ok=False, duration_ms=0, error="ffprobe not installed")
+        proc = subprocess.run(
+            ["ffprobe", "-v", "error", "-show_format", "-show_streams", "-of", "json", path],
+            capture_output=True, text=True, timeout=timeout,
+        )
+        ok = proc.returncode == 0
+        try:
+            data = json.loads(proc.stdout) if ok else None
+        except Exception:
+            data = None
+        return PrimResult(name="ffmpeg_probe", ok=ok, duration_ms=0, stdout=proc.stdout[:2000], stderr=proc.stderr[:1000], data=data)
+    return _timed(run)
+
+
+def ocr_image(path: str, *, timeout: float = 30.0) -> PrimResult:
+    def run() -> PrimResult:
+        if shutil.which("tesseract") is None:
+            return PrimResult(name="ocr_image", ok=False, duration_ms=0, error="tesseract not installed")
+        proc = subprocess.run(
+            ["tesseract", path, "-", "-l", "eng"],
+            capture_output=True, text=True, timeout=timeout,
+        )
+        return PrimResult(
+            name="ocr_image",
+            ok=proc.returncode == 0,
+            duration_ms=0,
+            stdout=proc.stdout, stderr=proc.stderr,
+        )
+    return _timed(run)
+
+
+def index_search(root: str, query: str, *, max_hits: int = 200) -> PrimResult:
+    def run() -> PrimResult:
+        r = Path(root).expanduser()
+        q = query.lower()
+        hits = []
+        for p in r.rglob("*"):
+            if len(hits) >= max_hits:
+                break
+            if q in p.name.lower():
+                hits.append({"path": str(p), "name": p.name})
+        return PrimResult(name="index_search", ok=True, duration_ms=0, data=hits)
+    return _timed(run)
+
+
+def head(path: str, *, n: int = 20) -> PrimResult:
+    def run() -> PrimResult:
+        p = Path(path).expanduser()
+        if not p.exists():
+            return PrimResult(name="head", ok=False, duration_ms=0, error=f"missing: {p}")
+        lines = p.read_text(encoding="utf-8", errors="replace").splitlines()[:n]
+        return PrimResult(name="head", ok=True, duration_ms=0, stdout="\n".join(lines), data={"count": len(lines)})
+    return _timed(run)
+
+
+def tail(path: str, *, n: int = 20) -> PrimResult:
+    def run() -> PrimResult:
+        p = Path(path).expanduser()
+        if not p.exists():
+            return PrimResult(name="tail", ok=False, duration_ms=0, error=f"missing: {p}")
+        lines = p.read_text(encoding="utf-8", errors="replace").splitlines()[-n:]
+        return PrimResult(name="tail", ok=True, duration_ms=0, stdout="\n".join(lines), data={"count": len(lines)})
+    return _timed(run)
+
+
+def wc_lines(path: str) -> PrimResult:
+    def run() -> PrimResult:
+        p = Path(path).expanduser()
+        if not p.exists():
+            return PrimResult(name="wc_lines", ok=False, duration_ms=0, error=f"missing: {p}")
+        with p.open("rb") as fh:
+            n = sum(1 for _ in fh)
+        return PrimResult(name="wc_lines", ok=True, duration_ms=0, stdout=str(n), data={"lines": n})
+    return _timed(run)
+
+
+def uname() -> PrimResult:
+    def run() -> PrimResult:
+        import platform
+        info = {
+            "system": platform.system(),
+            "release": platform.release(),
+            "machine": platform.machine(),
+            "python": platform.python_version(),
+        }
+        return PrimResult(name="uname", ok=True, duration_ms=0, stdout=json.dumps(info), data=info)
+    return _timed(run)
+
+
+def cpu_info() -> PrimResult:
+    def run() -> PrimResult:
+        info = {
+            "count": os.cpu_count(),
+            "loadavg": os.getloadavg() if hasattr(os, "getloadavg") else None,
+        }
+        return PrimResult(name="cpu_info", ok=True, duration_ms=0, stdout=json.dumps(info), data=info)
+    return _timed(run)
+
+
 PRIMITIVES: dict[str, Callable[..., PrimResult]] = {
     "sh": sh,
+    "sh_spawn": sh_spawn,
+    "which": which,
+    "pip_install": pip_install,
+    "process_kill": process_kill,
     "file_read": file_read,
     "file_write": file_write,
     "file_append": file_append,
@@ -402,24 +725,47 @@ PRIMITIVES: dict[str, Callable[..., PrimResult]] = {
     "file_delete": file_delete,
     "mkdir": mkdir,
     "http_get": http_get,
+    "http_post": http_post,
     "http_download": http_download,
     "file_search": file_search,
+    "index_search": index_search,
     "grep": grep,
+    "head": head,
+    "tail": tail,
+    "wc_lines": wc_lines,
     "disk_usage": disk_usage,
     "process_list": process_list,
     "pdf_to_text": pdf_to_text,
     "git_status": git_status,
     "git_log": git_log,
     "env_get": env_get,
+    "env_set": env_set,
+    "env_list": env_list,
     "summarize_text": summarize_text,
     "clipboard_write": clipboard_write,
+    "clipboard_read": clipboard_read,
     "now_iso": now_iso,
+    "hash_file": hash_file,
+    "b64_encode": b64_encode,
+    "b64_decode": b64_decode,
+    "regex_match": regex_match,
+    "json_parse": json_parse,
+    "csv_parse": csv_parse,
+    "archive_create": archive_create,
+    "archive_extract": archive_extract,
+    "ffmpeg_probe": ffmpeg_probe,
+    "ocr_image": ocr_image,
+    "uname": uname,
+    "cpu_info": cpu_info,
     "noop": noop,
 }
 
 
-DESTRUCTIVE: frozenset[str] = frozenset({"file_delete", "file_move"})
-NETWORK: frozenset[str] = frozenset({"http_get", "http_download"})
+DESTRUCTIVE: frozenset[str] = frozenset({
+    "file_delete", "file_move", "pip_install", "process_kill",
+    "archive_extract", "env_set",
+})
+NETWORK: frozenset[str] = frozenset({"http_get", "http_post", "http_download", "pip_install"})
 
 
 @dataclass(frozen=True)
@@ -448,8 +794,20 @@ class Action:
 
 
 def is_destructive(action: Action) -> bool:
-    return action.name in DESTRUCTIVE
+    if action.name in DESTRUCTIVE:
+        return True
+    if action.name in {"sh", "sh_spawn"}:
+        cmd = dict(action.kwargs).get("cmd", "")
+        if isinstance(cmd, str) and sh_looks_dangerous(cmd):
+            return True
+    return False
 
 
 def is_networked(action: Action) -> bool:
-    return action.name in NETWORK
+    if action.name in NETWORK:
+        return True
+    if action.name in {"sh", "sh_spawn"}:
+        cmd = dict(action.kwargs).get("cmd", "")
+        if isinstance(cmd, str) and sh_looks_networked(cmd):
+            return True
+    return False

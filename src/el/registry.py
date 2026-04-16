@@ -166,6 +166,35 @@ class SkillRegistry:
         self._conn.commit()
         return cur.rowcount
 
+    def decay_and_retire(
+        self,
+        *,
+        factor: float = 0.99,
+        floor: float = 0.0,
+        retire_threshold: float = 0.1,
+    ) -> dict:
+        """Decay all skill weights and retire any whose weight falls below
+        `retire_threshold` and whose net performance is negative.
+        """
+        before = self._conn.execute("SELECT COUNT(*) AS n FROM skills").fetchone()["n"]
+        self._conn.execute(
+            "UPDATE skills SET weight = MAX(?, weight * ?)",
+            (floor, factor),
+        )
+        cur = self._conn.execute(
+            "DELETE FROM skills WHERE weight < ? AND failure_count >= success_count",
+            (retire_threshold,),
+        )
+        self._conn.commit()
+        after = self._conn.execute("SELECT COUNT(*) AS n FROM skills").fetchone()["n"]
+        return {
+            "before": before,
+            "after": after,
+            "retired": cur.rowcount,
+            "factor": factor,
+            "retire_threshold": retire_threshold,
+        }
+
     def log_event(self, kind: str, payload: dict) -> None:
         self._conn.execute(
             "INSERT INTO events (ts, kind, payload_json) VALUES (?, ?, ?)",

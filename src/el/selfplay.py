@@ -186,24 +186,38 @@ class SelfPlayRunner:
     num_candidates: int = 5
     templates: dict[str, PlanBuilder] = field(default_factory=lambda: dict(DEFAULT_TEMPLATES))
 
-    def plan(self, intent: Intent) -> list[Action]:
-        rng = random.Random(self.seed + hash(intent.canonical_key()) % 1_000_000)
+    def candidates(self, intent: Intent) -> list[list[Action]]:
+        """Return up to N distinct candidate plans for the given intent."""
         builder = self.templates.get(intent.verb)
         if builder is None:
             return []
-        candidates: list[tuple[float, list[Action]]] = []
-        for _ in range(max(1, self.num_candidates)):
-            cand = builder(intent, rng)
-            if not cand:
+        rng = random.Random(self.seed + hash(intent.canonical_key()) % 1_000_000)
+        seen: set[tuple] = set()
+        out: list[list[Action]] = []
+        attempts = 0
+        while len(out) < max(1, self.num_candidates) and attempts < self.num_candidates * 4:
+            attempts += 1
+            plan = builder(intent, rng)
+            if not plan:
                 continue
-            score = self._score(cand, intent)
-            candidates.append((score, cand))
-        if not candidates:
-            return []
-        candidates.sort(key=lambda kv: kv[0], reverse=True)
-        return candidates[0][1]
+            key = tuple((a.name, tuple(sorted(a.kwargs))) for a in plan)
+            if key in seen:
+                plan = list(plan) + [Action.make("noop")]
+                key = tuple((a.name, tuple(sorted(a.kwargs))) for a in plan)
+                if key in seen:
+                    continue
+            seen.add(key)
+            out.append(plan)
+        return out
 
-    def _score(self, actions: list[Action], intent: Intent) -> float:
+    def plan(self, intent: Intent) -> list[Action]:
+        """Back-compat single-plan path used when subprocess sandbox is unavailable."""
+        cands = self.candidates(intent)
+        if not cands:
+            return []
+        return max(cands, key=lambda p: self._static_score(p, intent))
+
+    def _static_score(self, actions: list[Action], intent: Intent) -> float:
         score = 1.0
         score -= 0.05 * max(0, len(actions) - 3)
         if any(a.name == "noop" for a in actions):

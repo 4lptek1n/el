@@ -11,6 +11,10 @@ Control flow per command:
 from __future__ import annotations
 
 import json
+import os
+import subprocess
+import sys
+import tempfile
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -92,7 +96,7 @@ class Executor:
                 return self._run_candidate(intent, proposed, origin="transformer")
 
         if self.selfplay is not None:
-            plan = self.selfplay.plan(intent)
+            plan = self._selfplay_sandbox(intent)
             if plan:
                 return self._run_candidate(intent, plan, origin="selfplay")
 
@@ -151,6 +155,73 @@ class Executor:
         self._log_event("candidate_run", exec_result.to_dict())
         return exec_result
 
+    def _selfplay_sandbox(self, intent: Intent) -> list[Action]:
+        """Generate N candidate plans, run each in a sandboxed subprocess with
+        timeout, score every outcome, and return the winner's action list.
+
+        Each candidate executes in its own temp workdir. Destructive/network
+        primitives are blocked inside the sandbox. If the subprocess sandbox
+        is unavailable (e.g., frozen env), fall back to static scoring.
+        """
+        if self.selfplay is None:
+            return []
+        candidates = self.selfplay.candidates(intent)
+        if not candidates:
+            return []
+        winners: list[tuple[float, list[Action]]] = []
+        per_timeout = float(getattr(self.config, "selfplay_timeout_sec", 20.0))
+        self._log_event(
+            "selfplay_begin",
+            {"intent": intent.to_dict(), "n_candidates": len(candidates), "timeout_s": per_timeout},
+        )
+        for idx, plan in enumerate(candidates):
+            tmpdir = tempfile.mkdtemp(prefix="el-sandbox-")
+            payload = {
+                "actions": [a.to_dict() for a in plan],
+                "intent": intent.to_dict(),
+                "workdir": tmpdir,
+                "offline": True,
+                "timeout": per_timeout,
+            }
+            try:
+                proc = subprocess.run(
+                    [sys.executable, "-m", "el._candidate_runner"],
+                    input=json.dumps(payload),
+                    capture_output=True,
+                    text=True,
+                    timeout=per_timeout,
+                    env={**os.environ, "PYTHONPATH": os.environ.get("PYTHONPATH", "")},
+                )
+                if proc.returncode != 0 or not proc.stdout.strip():
+                    self._log_event("selfplay_candidate", {"idx": idx, "ok": False, "reward": -1.0, "stderr": proc.stderr[-500:]})
+                    continue
+                out = json.loads(proc.stdout)
+                reward = float(out.get("reward", 0.0))
+                self._log_event(
+                    "selfplay_candidate",
+                    {"idx": idx, "ok": bool(out.get("ok")), "reward": reward, "actions": [a.to_dict() for a in plan]},
+                )
+                winners.append((reward, plan))
+            except subprocess.TimeoutExpired:
+                self._log_event("selfplay_candidate", {"idx": idx, "ok": False, "reward": -1.0, "error": "timeout"})
+            except Exception as exc:
+                self._log_event("selfplay_candidate", {"idx": idx, "ok": False, "reward": -1.0, "error": str(exc)})
+            finally:
+                try:
+                    import shutil as _sh
+                    _sh.rmtree(tmpdir, ignore_errors=True)
+                except Exception:
+                    pass
+        if not winners:
+            return list(candidates[0])
+        winners.sort(key=lambda kv: kv[0], reverse=True)
+        best_reward, best_plan = winners[0]
+        self._log_event(
+            "selfplay_winner",
+            {"reward": best_reward, "actions": [a.to_dict() for a in best_plan]},
+        )
+        return list(best_plan)
+
     def _execute_actions(
         self, actions: Iterable[Action], intent: Intent
     ) -> Iterable[PrimResult]:
@@ -171,6 +242,11 @@ class Executor:
                     error="offline mode; network disabled",
                 )
                 return
+            if self.auto_confirm:
+                kw = dict(action.kwargs)
+                if action.name in {"sh", "sh_spawn", "pip_install", "process_kill", "file_delete"} and "confirmed" not in kw:
+                    kw["confirmed"] = True
+                    action = Action(name=action.name, kwargs=tuple((k, v) for k, v in kw.items()))
             result = action.call()
             yield result
             if not result.ok and action.name != "noop":

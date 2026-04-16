@@ -37,6 +37,8 @@ class Daemon:
     executor: Executor
     tasks: tuple[ScheduledTask, ...] = field(default_factory=lambda: DEFAULT_SCHEDULE)
     tick_seconds: float = 5.0
+    decay_every: int = 12  # ticks between registry decay sweeps
+    retire_threshold: float = 0.1
     _running: bool = True
     _on_event: Callable[[str, dict], None] | None = None
 
@@ -59,6 +61,16 @@ class Daemon:
                             },
                         )
             iters += 1
+            if iters % max(1, self.decay_every) == 0:
+                try:
+                    summary = self.executor.registry.decay_and_retire(
+                        retire_threshold=self.retire_threshold
+                    )
+                    if self._on_event:
+                        self._on_event("daemon_decay", summary)
+                except Exception as exc:  # keep daemon alive
+                    if self._on_event:
+                        self._on_event("daemon_decay_error", {"error": str(exc)})
             if max_iterations is not None and iters >= max_iterations:
                 break
             time.sleep(self.tick_seconds)
