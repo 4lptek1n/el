@@ -121,6 +121,31 @@ def test_candidate_runner_subprocess(tmp_path: Path) -> None:
     assert out["reward"] > 0
 
 
+def test_seeding_preserves_same_verb_variants(tmp_path: Path) -> None:
+    """Seeding must use exact-key dedup so many distinct intents sharing a
+    verb are all inserted (the previous lookup() fallback matched verb|% and
+    dropped variants)."""
+    from el.seed.bootstrap import bundled_skills, seed_registry
+
+    cfg = load_config(state_dir=tmp_path)
+    cfg.ensure_dirs()
+    registry = SkillRegistry(cfg.registry_path)
+    stats = seed_registry(registry, use_bundled=True)
+
+    bundled = list(bundled_skills())
+    unique_keys = {intent.canonical_key() for intent, _, _ in bundled}
+    # distinct same-verb variants must survive dedup
+    verbs = [intent.verb for intent, _, _ in bundled]
+    repeated_verbs = {v for v in verbs if verbs.count(v) > 1}
+    assert repeated_verbs, "test requires the bundled corpus to contain same-verb variants"
+
+    # every unique trigger key should be present
+    for intent, _, _ in bundled:
+        assert registry.has_exact_intent(intent), f"missing seeded intent: {intent.canonical_key()}"
+
+    assert stats["added"] >= len(unique_keys)
+
+
 def test_candidate_runner_blocks_destructive(tmp_path: Path) -> None:
     payload = {
         "actions": [Action.make("file_delete", path=str(tmp_path / "x"), confirmed=True).to_dict()],

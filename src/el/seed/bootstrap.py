@@ -173,7 +173,7 @@ def seed_registry(
     added = 0
     if use_bundled:
         for intent, actions, origin in bundled_skills():
-            if registry.lookup(intent, limit=1):
+            if registry.has_exact_intent(intent):
                 continue
             registry.add_skill(intent, actions, origin=origin, weight=0.6)
             added += 1
@@ -181,7 +181,7 @@ def seed_registry(
             p = SEED_DIR / name
             if p.exists():
                 for intent, actions, origin in _load_triples(p):
-                    if registry.lookup(intent, limit=1):
+                    if registry.has_exact_intent(intent):
                         continue
                     registry.add_skill(intent, actions, origin=origin, weight=0.55)
                     added += 1

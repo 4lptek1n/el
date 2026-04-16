@@ -109,6 +109,17 @@ class SkillRegistry:
         row = self._conn.execute("SELECT * FROM skills WHERE id = ?", (skill_id,)).fetchone()
         return _row_to_skill(row)
 
+    def has_exact_intent(self, intent: Intent) -> bool:
+        """Exact trigger-key presence check (no verb-level fallback).
+
+        Used by seeding to preserve all distinct same-verb variants.
+        """
+        row = self._conn.execute(
+            "SELECT 1 FROM skills WHERE trigger_key = ? LIMIT 1",
+            (intent.canonical_key(),),
+        ).fetchone()
+        return row is not None
+
     def lookup(self, intent: Intent, *, limit: int = 3) -> list[Skill]:
         rows = self._conn.execute(
             """
