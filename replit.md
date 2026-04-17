@@ -194,3 +194,46 @@ el thermo-xor --seeds 5
 ```
 Reports per-seed accuracy, raw output, inhibition strength, and net
 output for each of the four XOR cases.
+
+### Update 3 — temporal dimension (sequence learning)
+
+The static field has no memory of *order*. Two additions enable
+sequence learning with the same local-rules philosophy:
+
+1. **Eligibility trace `E[r,c]`** — a low-pass of recent temperature:
+   `E ← decay·E + (1−decay)·T`. Captures "this cell was hot recently"
+   even after T has decayed.
+2. **STDP-style plasticity** — replaces `pre_now × post_now` with
+   `pre_trace × post_now`. Edges where the pre-cell led the post-cell
+   in time get strengthened. Causal, temporally asymmetric, fully local.
+
+**Validated — coactivity association above naive baseline**:
+After 30 epochs of pairing A→B, presenting A *alone* (no B, no
+supervision) evokes a measurably higher response at B than the
+**same field before training** (cue ≈ 0.031 vs untrained baseline ≈
+0.021, mean delta +0.011 across 8 seeds, ≥6/8 seeds positive). The
+naive baseline is the rigorous control here; a "distance-matched
+unrelated cue" comparison is *also* positive but largely confounded
+by geometry, so we do not rely on it.
+
+**Known limitation — NOT directional yet**:
+Conductivity in the current Field is a single scalar per edge,
+shared between both directions of flow. The STDP rule sums forward
+and backward credit terms; this means after training on A→B,
+presenting B alone evokes a comparable response at A (the two events
+get **bound together in both directions**, not in the order A→B).
+Direct empirical check: trained A→B≈0.032 vs trained B→A≈0.038 —
+the supposed "predicted" direction is actually slightly weaker.
+A test (`test_known_limitation_association_is_bidirectional_not_directional`)
+exists specifically to keep this limitation visible.
+
+**Next step (planned)**: add directed conductivities (`C_AB ≠ C_BA`)
+so the substrate can represent direction at all. Then re-run with an
+anti-symmetric STDP rule `ΔC_AB = lr·(E_A·T_B − E_B·T_A)` and replace
+the bidirectional test with a directionality assertion. This is the
+required architectural change before AB→1 vs BA→0 classification
+becomes feasible.
+
+Pipeline files: `el/src/el/thermofield/sequence.py` (EligibilityTrace,
+stdp_hebbian_update, train_predict_next).
+Tests: `el/tests/thermofield/test_sequence.py` (3 tests).

@@ -31,6 +31,15 @@ from .runner import (
     train_xor,
     train_xor_with_interneurons,
 )
+from .sequence import (
+    EligibilityTrace,
+    PredictNextResult,
+    SequenceResult,
+    present_event,
+    relax_with_trace,
+    stdp_hebbian_update,
+    train_predict_next,
+)
 
 __all__ = [
     "Field",
@@ -48,4 +57,11 @@ __all__ = [
     "make_or_dataset",
     "train_xor_with_interneurons",
     "XORWithInterneuronResult",
+    "EligibilityTrace",
+    "stdp_hebbian_update",
+    "present_event",
+    "relax_with_trace",
+    "train_predict_next",
+    "PredictNextResult",
+    "SequenceResult",
 ]
