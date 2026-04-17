@@ -680,3 +680,81 @@ needs silicon).
 
 Per-area benchmark log: `el/scripts/bench/RESULTS.md` and
 `el/scripts/bench/*.py` (all reproducible).
+
+### Eşik 5 — sequence chain N>1 (KNOWN FAILURE, architectural limit)
+Tried 3 architectural fix families on top of v3 (random pair order +
+larger min_dist):
+  - **Stream training**: present full chain in one episode, single
+    eligibility trace persists across all anchors
+  - **Context-gated STDP**: per-edge lr scaled by `1/(1+gate·|B|)` so
+    saturated paths get reinforced less, fresh ones grab the trace
+  - **Anti-Hebb B-decay**: each STDP step also globally decays B so
+    older A→B paths fade as new B→C grows
+
+Best result across full sweep (n∈{5,10}, ep∈{80,200}, td∈{0.85,0.92},
+gate∈{0,2,5}, b_decay∈{0,0.005}): **overall discrim +0.06 max,
+links 2σ-positive 0/N in EVERY config**. Per-link variance is large
+(some links +0.2, others -0.1). This is a real limit of the current
+B-channel + STDP design — fixing it likely requires *two-channel*
+sequence memory (separate B for each ordinal position) or
+context-dependent gating that the current scalar B cannot represent.
+Pinned in `el/scripts/bench/seq_chain_v4.py` for future architects.
+
+### Eşik 3' — multi-task seq_then_pat / interleaved (KNOWN FAILURE
+via edge-mask channel separation)
+Tried random binary edge mask: PatternMemory writes Hebb only on
+mask=True edges, sequence STDP only on mask=False edges (so the two
+plasticity rules cannot overwrite each other on the same edge). At
+seq_frac ∈ {0.3, 0.5, 0.7}, neither condition reaches the ≥90 %/≥90 %
+gate; sequence retention only +18-31 %. The fundamental issue: with
+the substrate split in half by edges, sequence STDP has too little
+contiguous bandwidth left to actually carve a directional path. Pinned
+in `el/scripts/bench/multitask_edge_mask.py`. Right fix probably
+needs a *second physical B-channel* (parallel field for sequence-only
+edges) rather than a mask on the shared one.
+
+### Eşik 6 — class-incremental MNIST (PASSED via per-class readout)
+Catastrophic forgetting was solved at the *readout*, not the
+substrate. New `el/src/el/thermofield/continual.py` exposes:
+
+  - `feature_snapshot(field, pattern, snap_steps)` — frozen substrate
+    used as a featurizer (no plasticity during inference).
+  - `PerClassReadout(dim, n_classes)` — each class trained 1-vs-rest
+    once at first introduction, then weights frozen forever; argmax
+    over scores of trained classes only.
+
+Class-incremental MNIST results, 5 binary tasks introduced
+sequentially, evaluation on all classes seen so far:
+
+  | task | classes              | per-class | NMC   | shared softmax |
+  |------|----------------------|-----------|-------|----------------|
+  | 1    | 0,1                  | **1.000** | 0.993 | 0.993          |
+  | 2    | 0,1,2,3              | **0.950** | 0.856 | 0.451          |
+  | 3    | 0,1,2,3,4,5          | **0.918** | 0.819 | 0.307          |
+  | 4    | 0,1,2,3,4,5,6,7      | **0.882** | 0.772 | 0.234          |
+  | 5    | 0..9 (all)           | **0.832** | 0.712 | 0.174          |
+
+Reference: a vanilla MLP with a *full replay buffer* hits 0.873 at
+task 5 — our per-class head is **4 pts behind MLP+replay**, but uses
+**zero replay memory** and never updates substrate weights. The
+shared-softmax baseline (no per-class separation) collapses to 0.174,
+exactly the catastrophic-forgetting curve the literature predicts.
+
+Two regression tests in `tests/thermofield/test_continual.py`:
+  - `test_per_class_head_beats_shared_softmax_on_class_incremental`
+    (5-way synthetic proxy, head ≥0.70, head − shared ≥0.20)
+  - `test_per_class_head_predict_only_uses_trained_classes`
+  - `test_feature_snapshot_shape_and_determinism`
+
+### Compute / energy claim — honest disclaimer (added)
+The earlier "0.07 mW @ 168×168 @ 100 Hz int8" number is a *theoretical
+projection* from textbook MAC-energy figures (28 nm, ~0.2 pJ per int8
+MAC), NOT a silicon measurement. A same-rate dense MLP is also
+sub-mW under the same model. Until one of:
+
+  - a real silicon implementation with measured power, OR
+  - a side-by-side energy/accuracy Pareto where this substrate wins
+    at a given accuracy budget,
+
+the "low-power frontier" claim is not earned and should not appear
+in any externally-facing document without that disclaimer.
