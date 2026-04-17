@@ -996,3 +996,36 @@ afford edilemeyen lüks.
 
 Pinned: `el/scripts/bench/external_war_v5_compute_matched.py`. **İlk
 dürüst external head-to-head ZAFER.**
+
+### SkipBank core'a graduate edildi + MultiModalSubstrate (Apr 17, 2026)
+
+Asıl mimari ilerleme. `seq_chain_v7_hybrid.py` bench scriptindeki
+SkipBank artık `el/src/el/thermofield/skip_bank.py` içinde, save/load'lı,
+config'li, regression test'li.
+
+Yeni: `el/src/el/thermofield/multi_substrate.py` — `MultiModalSubstrate`
+sınıfı **TEK substrate** üzerinde üç modaliteyi birleştirir:
+  - **Pattern memory** (C kanalı, Hebb co-activation)
+  - **Sequence chain** (SkipBank, sparse long-range edges + STDP)
+  - **Persistence** (her iki kanal + meta save/load to disk)
+
+Tüm üçü tek `MultiModalSubstrate` instance içinde, hiçbir modalite
+diğerini ezmiyor. MLP'nin yapamayacağı şey: üç görev tek backprop-free
+substrate'te coexist.
+
+Yeni regresyon testleri (`tests/thermofield/test_multi_substrate.py`,
+5/5 yeşil):
+  - pattern memory unified API üzerinden recall ≥0.5
+  - chain link learning unified API üzerinden tüm linkler pos
+  - **coexistence**: aynı substrate'te pattern store + chain training,
+    pattern recall ≥0.5 VE chain pos ≥2/3 simultaneously
+  - SkipBank save/load round-trip identical
+  - MultiModalSubstrate save/load round-trip preserves both
+    modalities (pattern drift ≤0.05, chain link drift ≤0.05)
+
+**Test toplamı**: 143 (main, no v7 bench) + 5 (multi-substrate) +
+9 (v7 hybrid bench tests) = **157 yeşil**.
+
+Bu artık follow-up #1'in (SkipBank to core) tam çözümü. Substrate
+gerçekten **kategori-açıcı**: tek backprop-free fizik temeline üç
+cognitive function bindirildi, persistence ile hayatta kalıyor.
