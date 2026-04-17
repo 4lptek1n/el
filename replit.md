@@ -611,3 +611,72 @@ single-task in practice.
 runner, layered, crossbar, spikes, pattern_memory, multitask, and
 pattern_memory_persistence modules (interneurons module excluded from
 quick CI; runs slower).
+
+### Eşik 2 zorla — extreme grid 224×224, N=128 ve N=256 (PASSED)
+One-shot probe via `el/scripts/extreme_capacity.py` (6 seeds × 10
+trials each, drop=0.5 cue noise, no CI test — too slow at ~17 s/run):
+
+  | grid       | N=128            | N=256            |
+  |------------|------------------|------------------|
+  | 224 × 224  | **1.000 / 1.000** | **1.000 / 1.000** |
+
+(All 6 seeds perfect at both N=128 and N=256.) Chance at N=256 is
+1/256 ≈ 0.0039, so observed = **256× chance**. Per-cue recall
+latency averages ~80-180 ms on CPU; storage ~10-20 s for 256
+patterns. The substrate has not exhibited a kapasite kırılma noktası
+in any tested regime.
+
+### Bonus discovery — substrate as frozen feature extractor
+Original prototype-recall as MNIST classifier was bad (17-24 %
+accuracy). Rewriting the same substrate as a *frozen feature
+extractor* (inject binarized image, snapshot field temperature at
+multiple relax steps, concat as feature vector) plus a tiny linear
+readout reaches **91.2 % MNIST** on a 5000-image test set — beating
+the raw-pixel linear baseline (89.2 %) by 2 points without any
+substrate gradient.
+
+  | approach                                    | acc       |
+  |---------------------------------------------|-----------|
+  | Substrate prototype-recall (1-10/class)     | 0.17-0.24 |
+  | Linear on raw pixels                        | 0.892     |
+  | **Substrate features + linear** (best cfg)  | **0.912** |
+  | MLP hidden=16                               | 0.926     |
+  | MLP hidden=32                               | 0.941     |
+  | MLP hidden=128                              | 0.961     |
+
+Honest read: still loses to MLP-128 by ~5 pts, but the substrate
+*does* carry useful structure as a featurizer; the right API is not
+"recall the closest stored pattern" but "use the field state as an
+embedding." Pinned as a synthetic-proxy regression test in
+`tests/thermofield/test_features_mnist_proxy.py`.
+
+### Final honest scorecard (after this push)
+  - ✅ Eşik 1 (32+ seed × ≥16 pattern, single task): PASSED
+  - ✅ Eşik 2 (extreme grid scale 168, 224 × N=128, 256): NO BREAK
+  - ✅ Eşik 3 (multi-task pat→seq ordering): PASSED via `write_decay`
+  - ⚠️ Eşik 3' (seq→pat / interleaved): trade-off frontier — pinned
+    as `KNOWN_OPEN`. Tried 5 fix families incl. B-protect mask and
+    `write_decay` sweeps; no config keeps both ≥90 %.
+  - ✅ Eşik 4 (replay/persistence via save/load): PASSED
+  - ❌ Sequence chain N>1 (A→B→C→...): does NOT learn — 0/N links
+    statistically positive at n=3, 5, 10 across all tunes
+    (trace_decay ∈ {0.80, 0.85, 0.92}, epochs ∈ {30, 60, 100, 200},
+    min_dist ∈ {4, 5, 6}). Real architectural limit, not a bug.
+  - ❌ Continual MNIST (class-incremental, naive readout): substrate
+    %15-18, MLP-naive %20, MLP+replay **%87**. We do not solve
+    catastrophic forgetting at the readout for free.
+  - ✅ Bonus: substrate-as-features beats raw-pixel linear on MNIST.
+  - ⚠️ Compute (mW) audit: 168×168 @ 100 Hz int8 ≈ 0.07 mW
+    *theoretical* (28 nm energy figures, NOT silicon-measured). A
+    same-rate dense MLP is also sub-mW, so this is not yet a
+    differentiator without a side-by-side energy/accuracy Pareto.
+
+Combined verdict: kızıl elma criterion (32+ seeds × 16-64+ patterns
+× multi-task positive learning) **met** for the natural ordering;
+new findings extend the scorecard with both new wins (extreme
+capacity, substrate-as-features) and honestly-acknowledged limits
+(sequence chaining, continual learning at the readout, mW claim
+needs silicon).
+
+Per-area benchmark log: `el/scripts/bench/RESULTS.md` and
+`el/scripts/bench/*.py` (all reproducible).
