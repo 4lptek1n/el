@@ -9,27 +9,6 @@ args = ["pnpm", "store", "prune"]
 env = { "CI" = "true" }
 
 [workflows]
-runButton = "Project"
-
-[[workflows.workflow]]
-name = "Project"
-mode = "parallel"
-author = "agent"
-
-[[workflows.workflow.tasks]]
-task = "workflow.run"
-args = "swe_bench_run"
-
-[[workflows.workflow]]
-name = "swe_bench_run"
-author = "agent"
-
-[workflows.workflow.metadata]
-outputType = "console"
-
-[[workflows.workflow.tasks]]
-task = "shell.exec"
-args = "cd el && python -u scripts/el_swebench_classify.py --grid 192 --D 1024 --relax 12 --imprint 1500 --max-doc 4000 2>&1 | tee /tmp/swe_full.log"
 
 [agent]
 stack = "PNPM_WORKSPACE"

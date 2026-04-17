@@ -17,3 +17,4 @@ dist/
 
 .el_state_repro/
 report-run.md
+data/swebench/
