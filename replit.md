@@ -491,17 +491,104 @@ Encoded as `test_kizil_elma_capacity_threshold_56_grid_64_patterns`
 (reduced to 8 seeds × 10 trials × N=64 for CI speed; asserts mean
 ≥ 0.85 and 2 σ lower bound clearly > chance + 0.5).
 
-The remaining two eşik are still open work:
-  - **Eşik 3 — multi-task**: same substrate must hold pattern recall +
-    coding behaviour + terminal + world-state simultaneously, not just
-    isolated benchmarks.
-  - **Eşik 4 — replay**: snapshots, failed-command memory, and
-    plasticity must produce real cumulative capacity across runs (not
-    just logs).
+### Eşik 2 zorlama — extreme grid (168×168) hâlâ çökmüyor
+One-shot probe (3 seeds × 8 trials, no CI test — too slow):
 
-These are the next frontier targets.
+  | grid       | N=128 | N=256 |
+  |------------|-------|-------|
+  | 168 × 168  | 1.000 | 1.000 |
+
+At N=256 patterns × 168×168 grid: mean recall **1.000**, chance
+**0.0039** — 256× chance. Substrate scale + pattern count combined
+still no break point detected. (224×224 timed out at our compute
+budget — not a substrate failure, just runtime.)
+
+### Eşik 3 — multi-task substrate (HALF passed, HONEST failure on the other half)
+Single Field shared between PatternMemory (writes to symmetric C via
+Hebb) and sequence STDP (writes to directional B). Probe (8 seeds ×
+15 trials, 14×14 grid, A→B sequence association):
+
+  | condition           | pattern_acc       | seq_discrim      |
+  |---------------------|-------------------|------------------|
+  | pattern_only        | 0.467 ± 0.128     | -0.005 ± 0.038   |
+  | seq_only            |        —          | **+0.037 ± 0.011** |
+  | multi_pat_then_seq  | 0.517 ± 0.132     | **-0.016 ± 0.014** |
+  | multi_seq_then_pat  | 0.500 ± 0.147     | **-0.020 ± 0.006** |
+  | interleaved         | 0.533 ± 0.123     | **-0.020 ± 0.006** |
+
+Interpretation:
+  - ✅ **Pattern memory survives** co-training in every condition —
+    no catastrophic forgetting on that side; recall even ticks up.
+  - 🚨 **Sequence learning is destroyed** by pattern Hebb writes. The
+    symmetric C-channel updates from PatternMemory overwrite the
+    directional B-bias signal that sequence STDP wrote, AND saturate
+    C so generic A→B propagation becomes weaker than untrained
+    baseline.
+
+Pinned in `tests/thermofield/test_multitask.py`:
+  - `test_pattern_memory_survives_sequence_cotraining` — pattern
+    side robust.
+  - `test_sequence_learning_works_alone` — seq learning real (2σ
+    lower bound > 0).
+  - `test_sequence_destroyed_by_pattern_cotraining_KNOWN_BUG` — pins
+    the asymmetric forgetting; the test will start failing once it's
+    fixed (intentional regression marker).
+
+This is a real architectural finding, not a minor tuning issue. Real
+multi-task on this substrate needs either gated C-writes (suppress C
+plasticity during sequence training), topological channel separation,
+or a more clever rule that respects existing B-bias edges.
+
+### Eşik 4 — replay / persistence (PASSED)
+Substrate state can now outlive a single run via
+`PatternMemory.save(path)` / `.load(path)` — serializes C, B, stored
+patterns, full config to a `.npz` blob. Tests in
+`tests/thermofield/test_pattern_memory_persistence.py`:
+
+  - `test_round_trip_preserves_recall` — save → load on a different
+    object reproduces recall exactly (deterministic).
+  - `test_snapshot_carries_real_capacity_across_runs` — uses
+    aggressive noise (drop=0.75) so substrate completion has to
+    matter. Snapshot+continue hit ≥0.40 recall on batch1 vs
+    cold-start (only saw batch2) at much lower; gap ≥0.15 enforced.
+  - `test_save_blob_is_reasonable_size` — 14×14 snapshot < 50 KB.
+
+This is the missing piece for "every run leaves the model a little
+smarter" — the snapshot is the substrate, not just config.
+
+### Status against the kızıl elma criterion (honest scorecard)
+User's one-line definition of "büyük model":
+**"Çekirdek, 32+ seed altında, 16-64+ pattern kapasitesiyle, birden
+fazla görev ailesinde pozitif öğrenme üretirse."**
+
+The criterion is a *conjunction*: 32+ seeds AND 16-64+ patterns AND
+multi-task positive learning. Until all three hold simultaneously, we
+are NOT at "büyük model" by the user's own definition.
+
+  - ✅ **32+ seeds × 16-128 patterns** (one task, 56×56): passed in
+    direct probe (32 seeds × 15 trials, mean=0.975 at N=128 with
+    chance=0.008). CI test runs a smaller 8 seeds × 10 trials
+    sub-probe — meant as a regression tripwire, not as the source of
+    the headline 32-seed claim.
+  - ✅ **Substrate scale**: 14×14 → 168×168, no collapse; capacity
+    grows roughly with grid area.
+  - ✅ **Replay/persistence**: snapshot carries real capacity across
+    runs (8-seed paired test, sign≥7/8 + 2σ_low > 0).
+  - ❌ **Multi-task positive learning**: NOT passed. Pattern memory
+    survives co-training, but sequence learning is destroyed by
+    pattern Hebb writes (discrim drops from +0.037 alone to -0.020
+    after pattern co-training). By the user's own conjunction, this
+    means the kızıl elma criterion is **NOT yet met** — three pieces
+    in place, the fourth is open.
+
+Honest current label: **proto-core that has cleared single-task
+capacity + scaling + persistence, but is still single-task in
+practice**. The next real target is multi-task without
+cross-channel collapse (gated C-writes, channel separation, or a
+plasticity rule that respects existing B-bias).
 
 ### Total test status
-72 tests green across worldmodel, field, plasticity, sequence, runner,
-layered, crossbar, spikes, and pattern_memory modules
-(interneurons module excluded from quick CI; runs slower).
+**78 tests green** across worldmodel, field, plasticity, sequence,
+runner, layered, crossbar, spikes, pattern_memory, multitask, and
+pattern_memory_persistence modules (interneurons module excluded from
+quick CI; runs slower).
