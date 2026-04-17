@@ -1029,3 +1029,40 @@ Yeni regresyon testleri (`tests/thermofield/test_multi_substrate.py`,
 Bu artık follow-up #1'in (SkipBank to core) tam çözümü. Substrate
 gerçekten **kategori-açıcı**: tek backprop-free fizik temeline üç
 cognitive function bindirildi, persistence ile hayatta kalıyor.
+
+### Apr 17 son tur — probe script'leri canlı (Eşik 3, 4, 2-extreme)
+
+Kalan 3 eşik için CI testleri çoktan yeşildi; bugünkü iş probe
+script'lerini terminal-üreten hâle getirmek + canlı koşturmaktı.
+
+**el/scripts/multitask_probe.py** (Eşik 3, hizalanmış protokol):
+COTRAIN_PARAMS=(write_lr=0.07, write_steps=15, write_decay=0.005),
+14×14 grid, A=(12,1), B=(12,5), 8 seed × 15 trial:
+
+| condition | pat acc | seq disc | verdict |
+|---|---|---|---|
+| pattern_only        | 0.608 | —       | baseline |
+| seq_only            | —     | +0.0369 | baseline |
+| pat_then_seq lr=.07 | 0.600 | +0.0346 | **WIN** (pat 99%, seq 94%) |
+| seq_then_pat lr=.07 | 0.642 | +0.0186 | known-open (seq 50%) |
+| seq_then_pat lr=.14 | 0.625 | +0.0400 | **WIN** (pat 103%, seq 108%) |
+
+**el/scripts/extreme_capacity.py** (Eşik 2 zorla, 6 seed × 10 trial):
+
+| grid | N | k | chance | acc | recall |
+|---|---|---|---|---|---|
+| 64×64   | 32  | 40  | 0.031 | 0.974 ± 0.004 | 0.1s |
+| 64×64   | 64  | 40  | 0.016 | 0.617 ± 0.007 | 0.3s |
+| 128×128 | 64  | 163 | 0.016 | 0.988 ± 0.004 | 1.2s |
+| 128×128 | 128 | 163 | 0.008 | 0.902 ± 0.003 | 3.1s |
+| 224×224 | 128 | 501 | 0.008 | 0.999 ± 0.001 | 10.6s |
+| 224×224 | 256 | 501 | 0.004 | 0.999 ± 0.000 | 25.9s |
+
+224×224'te N=256'da bile **kapasiteyi henüz kıramadık** (acc=0.999 =
+**256× chance**). Substrate ölçek-rezervi var.
+
+**Eşik 4 (persistence)** — `tests/thermofield/test_pattern_memory_persistence.py`
+3 testi (round-trip + cumulative + load-continue) zaten yeşil; ek
+script gerekmedi.
+
+**Test sayısı**: 157/157 PASS (105.8s).

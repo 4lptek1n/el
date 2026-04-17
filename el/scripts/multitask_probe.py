@@ -1,20 +1,13 @@
-"""Eşik 3 — multi-task substrate probe.
+"""Eşik 3 — multi-task substrate probe (CLI report wrapper).
 
-Question: can a SINGLE Field instance learn pattern memory (uses C
-channel via Hebb co-activation) AND a sequence A→B association (uses B
-channel via STDP) without one task wrecking the other?
+Mirrors the protocol that test_multitask.py verifies in CI: same Field
+hosts BOTH PatternMemory (writes C, symmetric Hebb) AND sequence STDP
+(writes B, directional). With write_decay=0.005 + write_lr=0.07 +
+write_steps=15, multi_pat_then_seq retains ≥90 % of both single-task
+baselines simultaneously. Reverse ordering (seq_then_pat) needs the
+elevated STDP lr=0.14 to recover.
 
-This is the actual kızıl elma claim: a unified backprop-free substrate
-where multiple cognitive functions COEXIST. MLP cannot do this with one
-network — it would need two heads with shared trunk and joint training.
-
-Protocol:
-  1. Single-task A: pattern memory only (N=8 patterns, recall acc).
-  2. Single-task B: sequence association only (A→B discrimination).
-  3. Joint: same Field, alternate batches of A and B training.
-  4. Compare joint A-acc vs single-task A-acc, joint B-disc vs single B.
-
-Acceptance: each task retains ≥80% of its single-task score.
+Reports the four conditions and prints a Türkçe verdict.
 """
 from __future__ import annotations
 import sys, numpy as np
@@ -22,167 +15,144 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from el.thermofield.field import Field, FieldConfig
-from el.thermofield.pattern_memory import PatternMemory
+from el.thermofield.pattern_memory import PatternMemory, random_pattern
 from el.thermofield.sequence import (
     EligibilityTrace, present_event, relax_with_trace, stdp_hebbian_update,
 )
+from el.thermofield.plasticity import hebbian_update
 
-GRID = 28
-N_PATTERNS = 8
-SEEDS = list(range(6))
-
-
-def gen_patterns(rng, n=N_PATTERNS, density=0.10):
-    pats = []
-    for _ in range(n):
-        mask = rng.random((GRID, GRID)) < density
-        pos = [(int(r), int(c)) for r, c in zip(*np.where(mask))]
-        if not pos:
-            pos = [(int(rng.integers(GRID)), int(rng.integers(GRID)))]
-        pats.append(pos)
-    return pats
+GRID = 14
+N_PAT = 8
+A_POS = (12, 1)
+B_POS = (12, 5)
+SEEDS = list(range(8))
+N_TRIALS = 15
+COTRAIN_PARAMS = dict(write_lr=0.07, write_steps=15, write_decay=0.005)
 
 
-def corrupt(pat, rng, keep_frac=0.4):
-    n = max(1, int(round(len(pat) * keep_frac)))
-    idx = rng.choice(len(pat), size=n, replace=False)
-    return [pat[i] for i in sorted(idx)]
+def _noisy_cue(p, drop, rng, n_cells, cols):
+    kn = max(1, int(round(len(p) * (1 - drop))))
+    keep = [p[i] for i in sorted(rng.choice(len(p), kn, replace=False))]
+    pset = set(p); ds = []
+    while len(ds) < kn:
+        idx = int(rng.integers(0, n_cells)); rc = (idx // cols, idx % cols)
+        if rc not in pset and rc not in ds: ds.append(rc)
+    return keep + ds
 
 
-# --- pattern recall accuracy on a PatternMemory --------------------------
-def recall_acc(pm, patterns, seed, cues_per=5):
-    rng = np.random.default_rng(seed + 333)
-    correct = total = 0
-    for true_idx, p in enumerate(patterns):
-        for _ in range(cues_per):
-            cue = corrupt(p, rng)
-            pred, _, _ = pm.recall(cue)
-            correct += int(pred == true_idx); total += 1
-    return correct / max(1, total)
+def _pattern_acc(mem, patterns, drop, rng, nt):
+    cfg = mem.cfg; nc = cfg.rows * cfg.cols; correct = 0
+    for _ in range(nt):
+        i = int(rng.integers(0, len(patterns)))
+        cue = _noisy_cue(patterns[i], drop, rng, nc, cfg.cols)
+        b, _, _ = mem.recall(cue)
+        if b == i: correct += 1
+    return correct / nt
 
 
-# --- sequence A→B discrimination on a Field ------------------------------
-def train_sequence(field, trace, A_pos, B_pos, *, epochs=30, hold=5, gap=2,
-                   stdp_lr=0.07):
-    for _ in range(epochs):
+def _seq_train(field, lr=0.07, n_epochs=30, hold=5, gap=2):
+    trace = EligibilityTrace((field.cfg.rows, field.cfg.cols), decay=0.80)
+    for _ in range(n_epochs):
         field.reset_temp(); trace.reset()
-        present_event(field, trace, A_pos, [1.0]*len(A_pos), hold=hold)
+        present_event(field, trace, [A_POS], [1.0], hold=hold)
         relax_with_trace(field, trace, gap)
-        present_event(field, trace, B_pos, [1.0]*len(B_pos), hold=hold)
-        stdp_hebbian_update(field, trace, lr=stdp_lr)
+        field._clamp_positions = []; field._clamp_values = []
+        field.inject([B_POS], [1.0])
+        stdp_hebbian_update(field, trace, lr=lr)
+        for _ in range(hold):
+            field.step(); trace.update(field.T)
+        hebbian_update(field, lr=0.07, decay=0.001)
+    field.reset_temp()
 
 
-def probe_seq_response(field, trace, A_pos, B_pos, *, hold=5, read_delay=6):
-    """Present A alone, read mean T at B's region after relax."""
-    field.reset_temp(); trace.reset()
-    present_event(field, trace, A_pos, [1.0]*len(A_pos), hold=hold)
-    relax_with_trace(field, trace, read_delay)
-    return float(np.mean([field.T[r, c] for (r, c) in B_pos]))
+def _seq_probe(field, seed, hold=5, read_delay=6):
+    field.reset_temp()
+    tr = EligibilityTrace((field.cfg.rows, field.cfg.cols), decay=0.80)
+    present_event(field, tr, [A_POS], [1.0], hold=hold)
+    relax_with_trace(field, tr, read_delay)
+    cue = float(field.T[B_POS])
+    fresh = Field(field.cfg, seed=seed)
+    ftr = EligibilityTrace((field.cfg.rows, field.cfg.cols), decay=0.80)
+    present_event(fresh, ftr, [A_POS], [1.0], hold=hold)
+    relax_with_trace(fresh, ftr, read_delay)
+    return cue - float(fresh.T[B_POS])
 
 
-def seq_discrimination(field_factory, A_pos, B_pos, *, epochs=30):
-    """Trained response @ B - untrained response @ B (same field, fresh)."""
-    trace = EligibilityTrace((GRID, GRID), decay=0.80)
-    f_trained = field_factory()
-    train_sequence(f_trained, trace, A_pos, B_pos, epochs=epochs)
-    cue = probe_seq_response(f_trained, trace, A_pos, B_pos)
-
-    f_naive = field_factory()
-    trace2 = EligibilityTrace((GRID, GRID), decay=0.80)
-    naive = probe_seq_response(f_naive, trace2, A_pos, B_pos)
-    return cue - naive, cue, naive
+def _make_mem(seed, cfg, **overrides):
+    pat_size = max(4, int(0.05 * GRID * GRID))
+    wta_k = max(pat_size + 2, int(0.075 * GRID * GRID))
+    base = dict(write_steps=20, write_lr=0.30, write_decay=0.0)
+    base.update(overrides)
+    return PatternMemory(
+        cfg=cfg, seed=seed,
+        wta_k=wta_k, wta_suppression=0.3, rule="hebb", **base), pat_size
 
 
-# --- single-task baselines -----------------------------------------------
-def single_task_pattern(seed, patterns):
+def _run(condition, mem_overrides, seq_lr=0.07):
     cfg = FieldConfig(rows=GRID, cols=GRID)
-    pm = PatternMemory(cfg=cfg, seed=seed)
-    for p in patterns:
-        pm.store(p)
-    return recall_acc(pm, patterns, seed)
-
-
-def single_task_sequence(seed, A_pos, B_pos):
-    cfg = FieldConfig(rows=GRID, cols=GRID)
-    return seq_discrimination(lambda: Field(cfg, seed=seed), A_pos, B_pos)
-
-
-# --- joint: same Field, alternate ----------------------------------------
-def joint_task(seed, patterns, A_pos, B_pos, *, seq_epochs=30):
-    """Share ONE Field across pattern memory and sequence learning.
-
-    Schedule: store all patterns first (touches C only), then run
-    sequence training on the same field (touches B only). C/B are
-    independent channels but the runtime activity dynamics couple
-    them — sequence training's heat propagation rides on C edges
-    that pattern memory wrote.
-    """
-    cfg = FieldConfig(rows=GRID, cols=GRID)
-    field = Field(cfg, seed=seed)
-    # Build PatternMemory on top of the SAME field (shared substrate).
-    pm = PatternMemory(cfg=cfg, seed=seed, field=field)
-    for p in patterns:
-        pm.store(p)
-    # Sequence training on the same field.
-    trace = EligibilityTrace((GRID, GRID), decay=0.80)
-    train_sequence(field, trace, A_pos, B_pos, epochs=seq_epochs)
-    # Pattern recall after sequence training (substrate now has B-bias too).
-    a_acc = recall_acc(pm, patterns, seed)
-    # Sequence discrimination on the joint field (trained) vs fresh naive.
-    cue = probe_seq_response(field, trace, A_pos, B_pos)
-    naive_cfg = FieldConfig(rows=GRID, cols=GRID)
-    naive_field = Field(naive_cfg, seed=seed)
-    naive_trace = EligibilityTrace((GRID, GRID), decay=0.80)
-    naive = probe_seq_response(naive_field, naive_trace, A_pos, B_pos)
-    return a_acc, cue - naive, cue, naive
+    pat_accs, discrims = [], []
+    for seed in SEEDS:
+        rng = np.random.default_rng(seed)
+        mem, pat_size = _make_mem(seed, cfg, **mem_overrides)
+        patterns = [random_pattern(GRID, GRID, k=pat_size, rng=rng)
+                    for _ in range(N_PAT)]
+        field = mem.field
+        if condition == "seq_only":
+            _seq_train(field, lr=seq_lr)
+        elif condition == "pattern_only":
+            for p in patterns: mem.store(p)
+        elif condition == "multi_pat_then_seq":
+            for p in patterns: mem.store(p)
+            _seq_train(field, lr=seq_lr)
+        elif condition == "multi_seq_then_pat":
+            _seq_train(field, lr=seq_lr)
+            for p in patterns: mem.store(p)
+        if mem.patterns:
+            pat_accs.append(_pattern_acc(mem, patterns, 0.5,
+                np.random.default_rng(seed*31+7), N_TRIALS))
+        discrims.append(_seq_probe(field, seed))
+    return np.array(pat_accs), np.array(discrims)
 
 
 def main():
     print("=" * 78)
-    print("EŞİK 3 — MULTI-TASK SUBSTRATE PROBE")
-    print(f"  grid {GRID}×{GRID}, N_PATTERNS={N_PATTERNS}, seeds={len(SEEDS)}")
+    print("EŞIK 3 — MULTI-TASK SUBSTRATE PROBE")
+    print(f"  grid {GRID}×{GRID}, N_PAT={N_PAT}, seeds={len(SEEDS)} × {N_TRIALS} trials")
+    print("  protocol: PatternMemory(C-Hebb) + sequence STDP(B) on SAME Field")
     print("=" * 78)
 
-    A_pos = [(1, 1), (1, 2), (2, 1)]
-    B_pos = [(GRID-2, GRID-2), (GRID-2, GRID-3), (GRID-3, GRID-2)]
+    pa_alone, _      = _run("pattern_only", COTRAIN_PARAMS)
+    _,      sq_alone = _run("seq_only", COTRAIN_PARAMS)
+    pa_pat_seq, sq_pat_seq = _run("multi_pat_then_seq", COTRAIN_PARAMS)
+    pa_seq_pat, sq_seq_pat = _run("multi_seq_then_pat", COTRAIN_PARAMS)
+    # known second WIN: seq_then_pat with elevated STDP lr
+    pa_seq_pat14, sq_seq_pat14 = _run("multi_seq_then_pat", COTRAIN_PARAMS, seq_lr=0.14)
 
-    pat_solo = []; seq_solo = []
-    pat_joint = []; seq_joint = []
-
-    for seed in SEEDS:
-        rng = np.random.default_rng(seed)
-        patterns = gen_patterns(rng)
-        pat_solo.append(single_task_pattern(seed, patterns))
-        d_solo, _, _ = single_task_sequence(seed, A_pos, B_pos)
-        seq_solo.append(d_solo)
-        a_j, d_j, _, _ = joint_task(seed, patterns, A_pos, B_pos)
-        pat_joint.append(a_j); seq_joint.append(d_j)
-
-    def stat(xs):
-        a = np.asarray(xs)
-        return f"{a.mean():.3f} ± {a.std()/np.sqrt(len(a)):.3f}"
+    def f(x): return f"{x.mean():+.4f}" if x.mean() < 0.5 else f"{x.mean():.3f}"
 
     print()
-    print(f"{'task':<32} | {'solo':>20} | {'joint':>20}")
+    print(f"{'condition':<32} | {'pattern acc':>14} | {'seq disc':>14}")
     print("-" * 78)
-    print(f"{'pattern recall (chance=0.125)':<32} | "
-          f"{stat(pat_solo):>20} | {stat(pat_joint):>20}")
-    print(f"{'seq A->B discrimination':<32} | "
-          f"{stat(seq_solo):>20} | {stat(seq_joint):>20}")
+    print(f"{'pattern_only':<32} | {f(pa_alone):>14} | {'—':>14}")
+    print(f"{'seq_only':<32} | {'—':>14} | {f(sq_alone):>14}")
+    print(f"{'multi_pat_then_seq (lr=0.07)':<32} | {f(pa_pat_seq):>14} | {f(sq_pat_seq):>14}")
+    print(f"{'multi_seq_then_pat (lr=0.07)':<32} | {f(pa_seq_pat):>14} | {f(sq_seq_pat):>14}")
+    print(f"{'multi_seq_then_pat (lr=0.14)':<32} | {f(pa_seq_pat14):>14} | {f(sq_seq_pat14):>14}")
 
-    pat_ratio = np.mean(pat_joint) / max(1e-9, np.mean(pat_solo))
-    seq_ratio = np.mean(seq_joint) / max(1e-9, np.mean(seq_solo))
+    pa_keep_v1 = pa_pat_seq.mean() / max(1e-9, pa_alone.mean())
+    sq_keep_v1 = sq_pat_seq.mean() / max(1e-9, sq_alone.mean())
+    sq_keep_v2 = sq_seq_pat.mean() / max(1e-9, sq_alone.mean())
+    pa_keep_v3 = pa_seq_pat14.mean() / max(1e-9, pa_alone.mean())
+    sq_keep_v3 = sq_seq_pat14.mean() / max(1e-9, sq_alone.mean())
+
     print()
-    print(f"Pattern joint/solo ratio = {pat_ratio:.3f}  (need ≥0.80)")
-    print(f"Sequence joint/solo ratio = {seq_ratio:.3f} (need ≥0.80)")
-
-    if pat_ratio >= 0.80 and seq_ratio >= 0.80:
-        print("\n*** EŞİK 3 GEÇTİ: substrate hosts BOTH tasks ≥80% ***")
-    else:
-        which = []
-        if pat_ratio < 0.80: which.append(f"pattern degraded to {pat_ratio:.0%}")
-        if seq_ratio < 0.80: which.append(f"sequence degraded to {seq_ratio:.0%}")
-        print(f"\n!!! EŞİK 3 KIRILDI: {', '.join(which)} — interference !!!")
+    print(f"pat_then_seq:  pat_keep={pa_keep_v1:.0%}  seq_keep={sq_keep_v1:.0%}  "
+          f"{'WIN' if pa_keep_v1 >= 0.90 and sq_keep_v1 >= 0.90 else 'partial'}")
+    print(f"seq_then_pat (canonical lr=0.07): seq_keep={sq_keep_v2:.0%}  "
+          f"{'WIN' if sq_keep_v2 >= 0.90 else 'KNOWN-OPEN'}")
+    print(f"seq_then_pat (elevated lr=0.14):  pat_keep={pa_keep_v3:.0%}  "
+          f"seq_keep={sq_keep_v3:.0%}  "
+          f"{'WIN' if sq_keep_v3 >= 0.90 and pa_keep_v3 >= 0.80 else 'partial'}")
 
 
 if __name__ == "__main__":
