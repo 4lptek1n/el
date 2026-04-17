@@ -302,3 +302,77 @@ Why this matters for the "scale to neuromorphic chip" question:
 
 Files: `el/src/el/thermofield/layered.py`, tests in
 `el/tests/thermofield/test_layered.py` (3 tests).
+
+### Sparse non-local crossbar (RRAM-style long-range routing)
+The diffusion grid is fundamentally local (reach grows as O(√t)), so a
+distant cell can never influence another within useful time. Real
+neuromorphic chips and analog RRAM crossbars solve this with sparse
+arbitrary-distance edges. `crossbar.py` implements exactly that on
+top of any flat T array:
+- Each of N cells gets K outgoing edges to random other cells.
+- Every edge carries `C + B` (same scheme as in-grid edges → STDP-ready).
+- `step(T_flat)` does one vectorised round of heat exchange in place.
+- Direction-aware: positive B favours src→dst flow, negative favours reverse.
+
+Validated (`test_crossbar.py`, 5 tests, all green) — **mechanism, not
+performance**:
+- Energy conservation when no clamp is hit (Δenergy < 1e-3).
+- Mechanism: a single hand-placed (0,0)→(15,15) edge with C=1.0 makes
+  far-corner heat measurable in 8 steps where pure local diffusion
+  leaves it at ~0. This proves the route exists, not that random
+  K-edge crossbars give a quantified speedup on real workloads —
+  that benchmark is still TODO.
+- Bias asymmetry: forward-biased edge produces strictly more dst heat
+  than symmetric, which produces more than reverse-biased.
+
+### Spike binarization (Darwin-3 / AER protocol bridge)
+`spikes.py` provides a stateful threshold-and-reset transducer
+(`SpikeEncoder`) that turns the continuous T field into binary spike
+events, the protocol Loihi 2 / Tianjic / Darwin-3 actually use:
+- Rising edge across θ → emit spike at that flat index, subtract
+  `reset_drop` from T, enter absolute refractory for `refractory_steps`.
+- Output is a 1-D int array of fired cell indices per tick — exactly
+  what an AER router consumes (no analog payload).
+- Substrate dynamics keep running underneath unchanged; this layer
+  is purely the binarising bridge for chip-level mapping.
+
+5 tests in `test_spikes.py`, all green. Refractory semantics: spike
+sets counter to `refractory_steps`, and the counter is decremented
+ONLY for cells that did NOT just spike on the same tick. This avoids
+the off-by-one that would have made `K=2` block only 1 future tick
+(an architect-flagged bug, fixed and regression-tested).
+
+### Pattern memory benchmark — NEGATIVE FINDING (documented honestly)
+First attempt at end-to-end associative recall on the substrate. The
+mechanics work — store P patterns via clamped Hebb writes, recall
+top-N hottest cells after non-clamped cue injection, Jaccard match.
+
+**But the controlled baseline test failed**: with 3 patterns and 40%
+drop cues, an UNTRAINED instance (write_steps=0) outperforms a
+TRAINED one. Probe script `el/scripts/probe_pattern_memory.py` shows
+~0.90 untrained vs ~0.45 trained on the harder noisy-cue protocol.
+
+Diagnosis: the substrate's positive-only conductances + Hebbian-only
+plasticity have no mechanism to suppress non-pattern cells, and after
+several writes all C edges are uniformly elevated → diffusion smears
+heat everywhere → the Hebb writes actively HURT discrimination.
+There is no inhibition, no winner-take-all, and no negative weights —
+all of which real Hopfield-style associative memories need.
+
+What the tests now assert (`test_pattern_memory.py`, 4 tests, all green):
+- The pipeline runs end-to-end (smoke test).
+- Single-pattern self-recall produces a non-zero overlap (mechanism
+  works).
+- **REGRESSION GUARD**: trained does NOT yet exceed untrained by
+  more than 0.05 lift. When we add lateral inhibition / WTA, this
+  test will fail and force us to flip it to the positive direction.
+- Random cues don't collapse to a single winner.
+
+Next architectural piece (clearly identified by this finding):
+lateral inhibition + winner-take-all readout layer to convert the
+substrate from a diffuse heat field into a true attractor system.
+
+### Total test status
+56 tests green across worldmodel, field, plasticity, sequence, runner,
+layered, crossbar, spikes, and pattern_memory modules
+(interneurons module excluded from quick CI; runs slower).
