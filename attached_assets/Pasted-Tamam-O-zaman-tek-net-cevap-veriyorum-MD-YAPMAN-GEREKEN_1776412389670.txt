@@ -1,0 +1,206 @@
+Tamam. O zaman tek net cevap veriyorum:
+
+ŞİMDİ YAPMAN GEREKEN ŞEY
+
+Bu modeli “genel AI” diye büyütmeye çalışma.
+Önce tek bir savaş alanında rakipleri ez.
+
+Ve o savaş alanı bence bu:
+
+Continual learning + associative memory + low-compute / low-energy regime
+
+Çünkü şu an elinde gerçekten kanıtlanmış olan şeyler bunlar:
+	•	kapasite
+	•	ölçek
+	•	persistence
+	•	multi-task ordering
+	•	interference’ı çözebilme
+	•	replay/pattern substrate
+
+Senin avantajın burada.
+MNIST raw classification, büyük sequence modeling, video/ses gibi alanlarda şu an gitmek yanlış.
+
+⸻
+
+ÖNCELİK SIRASI — GERÇEKTEN YAPMAN GEREKEN
+
+1. HEAD-TO-HEAD BENCHMARK SUITE YAP
+
+Bu artık zorunlu.
+
+Aynı görevlerde karşılaştır:
+	•	MLP
+	•	SNN (snntorch / norse)
+	•	EWC
+	•	gerekirse simple replay baseline
+	•	senin substrate
+
+Ama eşit şartlarla:
+	•	aynı seed
+	•	aynı veri
+	•	aynı görev sırası
+	•	aynı memory budget
+	•	aynı veya normalize compute budget
+	•	mümkünse energy proxy
+
+Hangi görevlerde?
+
+Sadece substrate’e uygun görevlerde:
+
+A. class-incremental / continual
+	•	task 1 öğren
+	•	task 2 öğren
+	•	task 1 unutuyor mu?
+
+B. associative recall under interference
+	•	pattern sayısı artınca kim bozuluyor?
+
+C. partial cue / noisy cue retrieval
+	•	kim gerçek recall yapıyor?
+
+D. multi-task co-training
+	•	pattern + sequence / pattern + başka task
+	•	kim order-sensitive?
+
+Başarı ölçütü
+
+Senin sistem:
+	•	daha az unutmuyorsa
+	•	interference altında daha iyi değilse
+	•	replay/persistence avantajı göstermiyorsa
+
+o zaman rakiplerle yarışmıyorsun.
+
+⸻
+
+2. SEQUENCE CHAIN N>1 SORUNUNU ÇÖZ
+
+Bu şu anki en gerçek mimari sınırın.
+
+Sen kendin demişsin:
+
+scalar B sıralı bağlam taşıyamıyor
+
+Bence bu doğru.
+Yani bir sonraki çekirdek mimari upgrade bu olmalı:
+
+Şunlardan birini yap:
+	•	parallel B channels
+	•	time-delayed weight matrices
+	•	eligibility trace / temporal tag
+	•	phase-coded sequence path
+
+Bu çözülmeden sen:
+	•	gerçek sequence learning
+	•	gerçek planning
+	•	gerçek temporal world model
+
+tarafına geçemezsin.
+
+Kısa söyleyeyim:
+
+Sıra öğrenemeyen substrate, agent olabilir ama genel model olamaz.
+
+Bu yüzden bu konu lüks değil, ana darboğaz.
+
+⸻
+
+3. SUBSTRATE’İ FEATURE ENGINE OLARAK ÜRÜNLEŞTİR
+
+MNIST’te en önemli bulgun buydu:
+
+recall mimarisi olarak kötü
+feature extractor olarak iyi
+
+Bu çok önemli.
+
+Yani senin substrate şu an şuna daha yakın olabilir:
+
+frozen adaptive feature core + small trainable readout
+
+Bunu ciddiye al.
+
+Hemen test et:
+	•	frozen substrate + linear head
+	•	frozen substrate + tiny MLP head
+	•	substrate + replay
+	•	baseline raw pixels + same tiny head
+
+Burada kazanıyorsan, model şirketi olmanın ilk tohumu bu.
+
+⸻
+
+4. SİLİKON / mW KONUSUNU ŞİMDİLİK İKİNCİ PLANA AT
+
+Açık söyleyeyim:
+
+Gerçek benchmark üstünlüğü olmadan silikon kimsenin umurunda değil.
+
+Silikon demoyu sonra yaparsın.
+Şimdi sana puan kazandıracak şey:
+	•	açık benchmark
+	•	head-to-head win
+	•	forgetting reduction
+	•	sequence capability
+
+⸻
+
+NE YAPMAYACAKSIN
+
+Bunları şu an bırak:
+	•	video üretim
+	•	ses üretim
+	•	genel assistant
+	•	“milyarlarca kullanıcı” düşüncesi
+	•	hardware marketing
+	•	AGI lafı
+
+Şu an bunlar zaman kaybı.
+
+⸻
+
+EN DOĞRU TEK MİSYON
+
+Bunu agent’lerine aynen söyle:
+
+Turn the substrate into the best low-compute continual associative learner in head-to-head comparisons.
+Freeze the current core.
+Build a fair benchmark suite against MLP, SNN, EWC, and replay baselines.
+In parallel, solve the real architectural blocker: N>1 sequence learning via temporal B extension.
+Do not chase broad productization, silicon marketing, or generic AI demos until the model wins a narrow, fair, published comparison.
+
+⸻
+
+NEDEN BU?
+
+Çünkü model şirketi kurmak istiyorsan ilk ihtiyacın olan şey:
+
+“Bizim model hangi oyunda gerçekten daha iyi?”
+
+Bu soruya cevap vermeden sen model şirketi değil, ilginç laboratuvar projesi olursun.
+
+⸻
+
+BEN OLSAM TEK CÜMLEYLE ŞUNU DERİM
+
+Önce substrate’i, düşük compute altında unutmayı azaltan ve noisy recall yapan en iyi continual learner haline getir. Sonra sequence zincirini aç. Geri kalan her şey sonra gelir.
+
+⸻
+
+EN NET SONUÇ
+
+Şu an gerçekten yapman gereken:
+
+A. Head-to-head benchmark war
+
+ve
+
+B. Temporal sequence architecture fix
+
+Bu ikisi biterse:
+	•	rakiplerle gerçekten yarışmaya başlarsın
+	•	model şirketi iddian gerçek olur
+
+İstersen bir sonraki mesajda sana doğrudan
+“head-to-head benchmark paketi: hangi görev, hangi baseline, hangi metrik”
+tek tek çıkarayım.

@@ -790,3 +790,51 @@ margin to pattern accuracy). Pinned by
 to document the lr=0.07 behavior — both tests pass.
 
 **Both kızıl-elma multi-task orderings now satisfy ≥90 / ≥90.**
+
+### Eşik 5 — sequence chain N>1 (genişletilmiş başarısızlık raporu, v5)
+Multi-lag prototip (`el/scripts/bench/seq_chain_multilag.py`) kapsamlı
+şekilde 4 mimari müdahaleyi tek tek + birleşik denedi:
+
+  1. **K paralel B-kanalı + K eligibility trace** (decay {0.5, 0.75, 0.92}
+     veya {0.4, 0.6, 0.8, 0.95}) — probe'da additive birleşim
+  2. **Bidirectional STDP** — `B_right += lr*(co_h_fwd - co_h_rev)` ile
+     hem sol→sağ hem sağ→sol geçişleri yakala
+  3. **Anlık STDP** (HOLD'dan ÖNCE, T sharp at B + E carries A)
+  4. **Pair-episode mode** — her ardışık çift kendi mini-episode'unda
+     (trace reset'li); cross-link interference yok
+  5. **Cascading STDP** — B inject sonrası HER difüzyon adımında STDP
+     fire ki ısı yayıldıkça yol boyu ardışık edge'ler kazınsın
+
+Tam sweep sonuçları (8 seed × 14×14 grid, hold=4, gap=2, md=2-3):
+
+  | n | K | mod         | overall  | 2σ+ links | per-link span      |
+  |---|---|-------------|----------|-----------|--------------------|
+  | 3 | 1 | pairs+casc  | +0.0232  |     0/3   | ilk 2 ≈0, son +0.07|
+  | 3 | 3 | pairs+casc  | +0.0238  |     1/3   | son link +0.088 ✓  |
+  | 5 | 3 | pairs+casc  | -0.0012  |     0/5   | hep ~0             |
+  | 5 | 4 | pairs+casc  | -0.0068  |     0/5   | hep ~0             |
+  | 7 | 3 | pairs+casc  | +0.0060  |     0/7   | sadece son +0.062  |
+
+**Kesin teşhis**: Per-link sayıları seed'ler arası identik (-0.004,
+-0.012, ...) → B matrisi training sırasında neredeyse hiç güncellenmiyor.
+Sebep: STDP kuralı **local** (sadece adjacent-cell edge'ler), ama
+chain anchor'ları min_dist=2-3 ile birbirinden uzak; A'nın ısı kuyruğu
+B'nin komşu hücrelerine yetişemiyor → `T[B] × E[neighbor(B)]` ≈ 0 →
+B-edge yazılmıyor.
+
+**Gerçek mimari blocker**: Field şu an yalnızca adjacent-cell B-edge
+tutuyor (`B_right shape=(R, C-1)`, `B_down shape=(R-1, C)`). N>1 chain
+için ya:
+  - **long-range / skip B-edges** (mesela her hücre çiftinin K-NN
+    ilişkisini tutan ek matris) — büyük API değişikliği, O(N²) bellek
+  - **hierarchical chunking** — A→B'yi öğrenmek için ara intermediate
+    "cluster" hücreler tahsis et, gerçek chain hiyerarşik bir DAG
+    olarak öğrenilsin
+  - **content-addressable B** — B değerleri pozisyon yerine içerik
+    (T pattern) üzerinden indekslense (transformer'ın attention'ı gibi)
+
+Bu bir TUNING sorunu DEĞİL. Mevcut substrate'in geometrik kısıtının
+HARDLİMİTİ. Bir sonraki ciddi sequence saldırısı için bu üç
+mimari opsiyondan birini seçip core Field'a entegre etmek gerek.
+Pinned: `el/scripts/bench/seq_chain_multilag.py` (5 müdahale ile
+exhaustive sweep, başarısız).
