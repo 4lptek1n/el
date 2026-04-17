@@ -70,6 +70,10 @@ class FrozenSubstrate:
             arr.setflags(write=False)
         self._read_idx = (self.read_positions[:, 0].astype(np.int64) * self.cfg.cols
                           + self.read_positions[:, 1].astype(np.int64))
+        # Cache a single Field instance, reused across all encode() calls.
+        # Field.step() does NOT mutate C / B / read_positions — only the
+        # transient temperature array. We reset_temp() before each encode.
+        self._cached_field: Field | None = None
 
     # ------------------------------------------------------------------
     # Constructors
@@ -137,15 +141,18 @@ class FrozenSubstrate:
     # Forward (frozen) pass
     # ------------------------------------------------------------------
     def _build_field(self) -> Field:
-        f = Field(self.cfg, seed=self.seed)
-        # Overwrite the random init with the frozen weights. We assign
-        # to .data via a fresh writable copy because the frozen arrays
-        # are read-only.
-        f.C_right = self.C_right.copy()
-        f.C_down = self.C_down.copy()
-        f.B_right = self.B_right.copy()
-        f.B_down = self.B_down.copy()
-        return f
+        # Build once, lazily, then reuse across all encode() calls.
+        # Field.step() and Field.inject() mutate only the transient
+        # temperature buffer T (reset every call); they do NOT touch
+        # the frozen weights C_right, C_down, B_right, B_down.
+        if self._cached_field is None:
+            f = Field(self.cfg, seed=self.seed)
+            f.C_right = self.C_right.copy()
+            f.C_down = self.C_down.copy()
+            f.B_right = self.B_right.copy()
+            f.B_down = self.B_down.copy()
+            self._cached_field = f
+        return self._cached_field
 
     def encode(self, cue: Pattern, *, clamp: bool = False) -> np.ndarray:
         """Inject `cue`, relax `relax_steps`, return temperature at read electrodes.
