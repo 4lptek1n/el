@@ -152,6 +152,85 @@ class PatternMemory:
         return best_i, best_score, np.array(sorted(hot))
 
 
+    # ------------------------------------------------------------------
+    # Persistence — Eşik 4: substrate state must outlive a single run
+    # ------------------------------------------------------------------
+    def save(self, path) -> None:
+        """Serialize substrate state (C, B), stored patterns, and config to .npz.
+
+        After save+load, the memory must produce the same recall accuracy
+        as the original — the substrate state is the model.
+        """
+        from pathlib import Path
+        f = self.field
+        patterns_arr = np.array(
+            [(i, r, c) for i, p in enumerate(self.patterns) for (r, c) in p],
+            dtype=np.int32,
+        ) if self.patterns else np.zeros((0, 3), dtype=np.int32)
+        np.savez(
+            str(Path(path)),
+            cfg_rows=self.cfg.rows, cfg_cols=self.cfg.cols,
+            cfg_diffusion_rate=self.cfg.diffusion_rate,
+            cfg_decay=self.cfg.decay, cfg_n_steps=self.cfg.n_steps,
+            cfg_nonlinear_alpha=self.cfg.nonlinear_alpha,
+            seed=self.seed,
+            write_steps=self.write_steps, write_lr=self.write_lr,
+            recall_steps=self.recall_steps,
+            wta_k=self.wta_k, wta_suppression=self.wta_suppression,
+            use_global_gain=self.use_global_gain,
+            target_mean=self.target_mean,
+            rule=self.rule,
+            cov_baseline=(self.cov_baseline if self.cov_baseline is not None
+                          else np.nan),
+            C_right=f.C_right, C_down=f.C_down,
+            B_right=f.B_right, B_down=f.B_down,
+            patterns=patterns_arr,
+        )
+
+    @classmethod
+    def load(cls, path) -> "PatternMemory":
+        """Reconstruct a PatternMemory from a .npz produced by save()."""
+        from pathlib import Path
+        d = np.load(str(Path(path)))
+        cfg = FieldConfig(
+            rows=int(d["cfg_rows"]), cols=int(d["cfg_cols"]),
+            diffusion_rate=float(d["cfg_diffusion_rate"]),
+            decay=float(d["cfg_decay"]),
+            n_steps=int(d["cfg_n_steps"]),
+            nonlinear_alpha=float(d["cfg_nonlinear_alpha"]),
+        )
+        cov_baseline = float(d["cov_baseline"])
+        if np.isnan(cov_baseline):
+            cov_baseline = None
+        mem = cls(
+            cfg=cfg, seed=int(d["seed"]),
+            write_steps=int(d["write_steps"]),
+            write_lr=float(d["write_lr"]),
+            recall_steps=int(d["recall_steps"]),
+            wta_k=int(d["wta_k"]),
+            wta_suppression=float(d["wta_suppression"]),
+            use_global_gain=bool(d["use_global_gain"]),
+            target_mean=float(d["target_mean"]),
+            rule=str(d["rule"]),
+            cov_baseline=cov_baseline,
+        )
+        mem.field.C_right[:] = d["C_right"]
+        mem.field.C_down[:] = d["C_down"]
+        mem.field.B_right[:] = d["B_right"]
+        mem.field.B_down[:] = d["B_down"]
+        # Reconstruct patterns list from flat (idx, r, c) array
+        pat_arr = d["patterns"]
+        if pat_arr.size > 0:
+            from collections import defaultdict
+            by_idx = defaultdict(list)
+            for row in pat_arr:
+                by_idx[int(row[0])].append((int(row[1]), int(row[2])))
+            mem.patterns = [by_idx[i] for i in sorted(by_idx)]
+        else:
+            mem.patterns = []
+        return mem
+
+
 def random_pattern(rows: int, cols: int, k: int, rng: np.random.Generator) -> Pattern:
     """A random pattern of `k` distinct active cells on a rows×cols grid."""
     n = rows * cols
