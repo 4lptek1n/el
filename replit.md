@@ -139,3 +139,37 @@ Outputs untrained natural response, post-training response, and field stats.
 
 **Tests**: `python3 -m pytest tests/thermofield/ -v` (14 tests covering
 field substrate, plasticity rules, natural XOR shape, training stability).
+
+### Update — 4/4 XOR with two-population architecture
+
+Following the user's "lateral inhibition / interneuron" insight, added
+`el.thermofield.interneurons` — a separate inhibitory population with
+its own receptive field (`w_in`), output gain (`w_out`), and threshold.
+The output reading becomes `net = max(0, raw − sum(w_out · I_k))`.
+
+Task split: the excitatory thermal field is trained only on the three
+positive XOR cases via local plasticity. A coincidence-detector
+interneuron (theta=1.0, listens to both inputs) suppresses the (1,1)
+case at readout. **Result: 4/4 XOR accuracy on 5/5 random seeds**
+(see `test_xor_with_interneurons_solves_4_of_4_across_seeds`).
+
+This is the first reproducible win. With the local rules and geometry
+tried so far, the single-population approach plateaued at 3/4 because
+all four examples share the same conductivity paths; adding a second
+population (one whose job is to SUBTRACT from the output) breaks that
+shared-path conflict. (We do not claim XOR is formally unreachable
+with one population — only that no local rule we tried got past 3/4.)
+
+**Open research problem**: learn the interneuron weights from purely
+local rules. Pure Hebbian saturates (heat distributions of single- and
+double-input cases overlap heavily after diffusion). Contrastive
+Hebbian collapses w_in toward zero. The current implementation hand-
+configures the interneuron as a coincidence detector and only learns
+the excitatory field; learning the interneuron remains future work.
+
+**Demo**:
+```bash
+el thermo-xor --seeds 5
+```
+Reports per-seed accuracy, raw output, inhibition strength, and net
+output for each of the four XOR cases.

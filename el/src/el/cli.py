@@ -390,6 +390,49 @@ def cli_thermo_demo(epochs: int, seed: int) -> None:
     ))
 
 
+@main.command("thermo-xor")
+@click.option("--epochs", default=150, show_default=True, help="Field training epochs.")
+@click.option("--seed", default=0, show_default=True)
+@click.option("--seeds", default=1, show_default=True, type=click.IntRange(min=1),
+              help="Run across N consecutive seeds and report aggregate.")
+def cli_thermo_xor(epochs: int, seed: int, seeds: int) -> None:
+    """Solve XOR with the two-population thermofield (excitatory + inhibitory).
+
+    Splits the task by responsibility: the excitatory field learns the
+    positive cases via local plasticity; a hand-configured inhibitory
+    interneuron suppresses the (1,1) coincidence case. Reaches 4/4 XOR
+    accuracy reliably across random seeds — the first reproducible win
+    of this experiment.
+    """
+    from .thermofield import train_xor_with_interneurons
+
+    runs = []
+    for s in range(seed, seed + seeds):
+        result = train_xor_with_interneurons(epochs=epochs, seed=s)
+        runs.append({
+            "seed": s,
+            "accuracy": result.accuracy,
+            "details": result.details,
+            "interneuron_stats": result.interneurons.stats(),
+        })
+
+    perfect = sum(1 for r in runs if r["accuracy"] == 1.0)
+    summary = {
+        "n_seeds": seeds,
+        "perfect_runs": perfect,
+        "mean_accuracy": sum(r["accuracy"] for r in runs) / len(runs),
+        "runs": runs,
+        "architecture": (
+            "Excitatory thermal field trained on {(0,0)→0, (0,1)→1, "
+            "(1,0)→1} via gated Hebbian + supervised nudge. A separate "
+            "inhibitory interneuron is a coincidence detector on the two "
+            "input cells (theta=1.0 fires only when both hot together) "
+            "and subtracts inhibition from the output reading."
+        ),
+    }
+    click.echo(json.dumps(summary, indent=2, ensure_ascii=False))
+
+
 @main.command("demo")
 @click.option("--all", "run_all", is_flag=True, help="Run the full demo suite.")
 @click.option("--name", "single", default=None, help="Run a single demo by name.")
@@ -523,7 +566,7 @@ def _run_command(ctx: click.Context, raw: str) -> None:
 for _name in (
     "run", "parse", "seed", "stats", "events", "verbs", "export-training",
     "daemon", "rate", "demo", "train", "transformer-eval",
-    "think", "world-stats", "world-reset", "thermo-demo",
+    "think", "world-stats", "world-reset", "thermo-demo", "thermo-xor",
 ):
     _SUBCOMMAND_NAMES.add(_name)
 

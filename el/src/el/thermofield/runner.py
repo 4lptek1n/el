@@ -12,7 +12,12 @@ from typing import Callable
 import numpy as np
 
 from .field import Field, FieldConfig
-from .plasticity import hebbian_update, supervised_nudge
+from .interneurons import Interneurons, InterneuronConfig
+from .plasticity import (
+    gated_hebbian_update,
+    hebbian_update,
+    supervised_nudge,
+)
 
 
 def make_or_dataset() -> list[tuple[list[float], float]]:
@@ -112,3 +117,120 @@ def evaluate(
         reading = float(field.read(out_positions)[0])
         out.append({"input": list(inputs), "target": float(target), "output": reading})
     return out
+
+
+# --------------------------------------------------------------------------
+# Two-population XOR: excitatory field + inhibitory interneuron
+# --------------------------------------------------------------------------
+#
+# With the local rules and geometry tried so far, a single-population
+# field plateaued at 3/4 XOR accuracy: any rule that strengthens
+# (0,1)/(1,0) leaks into (1,1), and any rule that weakens (1,1) damages
+# (0,1)/(1,0). (This is empirical, not a formal impossibility.) The
+# biologically motivated fix here is a separate inhibitory
+# interneuron that fires only on coincident input and subtracts from the
+# output. This module implements that two-population architecture.
+#
+# Training is split by responsibility:
+#   * The excitatory field is trained on positive examples only — it learns
+#     to drive the output high whenever ANY input is on.
+#   * The inhibitory interneuron is hand-configured as a coincidence
+#     detector: it fires only when both inputs are simultaneously hot and
+#     subtracts a strong inhibitory current from the output reading.
+#
+# Result: 4/4 XOR accuracy, robust across random seeds (5/5 in tests).
+# Learning the interneuron weights from local rules remains an open
+# research problem (the heat distributions of single- and double-input
+# cases overlap heavily after diffusion, making contrastive Hebbian
+# under-determined).
+
+
+@dataclass
+class XORWithInterneuronResult:
+    field: Field
+    interneurons: Interneurons
+    accuracy: float
+    details: list[dict]
+
+
+def _xor_io(cfg: FieldConfig) -> tuple[list, list]:
+    """IO positions chosen so that both inputs sit in the same row,
+    creating a clean lateral path that the interneuron can monitor."""
+    in_positions = [(1, 1), (1, cfg.cols - 2)]
+    out_positions = [(cfg.rows // 2, cfg.cols // 2)]
+    return in_positions, out_positions
+
+
+def train_xor_with_interneurons(
+    *,
+    epochs: int = 150,
+    seed: int = 0,
+    cfg: FieldConfig | None = None,
+    nudge_lr: float = 0.20,
+    hebb_lr_pos: float = 0.02,
+) -> XORWithInterneuronResult:
+    """Train the two-population system on XOR.
+
+    Phase 1: train the excitatory field on the three positive cases
+    {(0,0)→0, (0,1)→1, (1,0)→1}. (1,1) is intentionally excluded so the
+    field does not get conflicting signals on its shared paths.
+
+    Phase 2: install a hand-configured inhibitory interneuron whose
+    receptive field listens to both inputs (w_in concentrated at the two
+    input cells, theta=1.0 so it fires only when both are hot together).
+    Its w_out is set high enough to fully suppress the field's output
+    on (1,1).
+    """
+    cfg = cfg or FieldConfig()
+    field = Field(cfg, seed=seed)
+    in_positions, out_positions = _xor_io(cfg)
+
+    pos_data = [([0.0, 0.0], 0.0), ([0.0, 1.0], 1.0), ([1.0, 0.0], 1.0)]
+    rng = np.random.default_rng(seed + 1)
+
+    for _ in range(epochs):
+        rng.shuffle(pos_data)
+        for inputs, target in pos_data:
+            field.reset_temp()
+            field.inject(in_positions, inputs)
+            field.relax()
+            supervised_nudge(field, out_positions, [target], lr=nudge_lr)
+            gated_hebbian_update(
+                field, out_positions, target=target,
+                lr_pos=hebb_lr_pos, lr_inh=0.0,
+            )
+
+    interneurons = Interneurons(InterneuronConfig(n=1), (cfg.rows, cfg.cols), seed=42)
+    interneurons.w_in[:] = 0.0
+    for r, c in in_positions:
+        interneurons.w_in[0, r, c] = 0.7
+    interneurons.theta[0] = 1.0
+    interneurons.w_out[0] = 5.0
+
+    details = []
+    correct = 0
+    for inputs, target in make_xor_dataset():
+        field.reset_temp()
+        field.inject(in_positions, inputs)
+        field.relax()
+        raw = float(field.read(out_positions)[0])
+        inhibition = interneurons.inhibition(field.T)
+        net = max(0.0, min(1.0, raw - inhibition))
+        ok = (net >= 0.5) == (target >= 0.5)
+        if ok:
+            correct += 1
+        details.append({
+            "input": list(inputs),
+            "target": float(target),
+            "raw": raw,
+            "inhibition": float(inhibition),
+            "net": float(net),
+            "correct": bool(ok),
+        })
+    accuracy = correct / len(details)
+    return XORWithInterneuronResult(
+        field=field,
+        interneurons=interneurons,
+        accuracy=accuracy,
+        details=details,
+    )
