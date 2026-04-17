@@ -72,3 +72,21 @@ def test_xor_inhibition_only_fires_on_coincident_input() -> None:
     assert by_input[(1.0, 0.0)]["inhibition"] < 0.01
     # Coincident input should have substantial inhibition
     assert by_input[(1.0, 1.0)]["inhibition"] > 0.1
+
+
+def test_interneuron_receptive_field_is_learned_at_input_cells() -> None:
+    """The interneuron must DISCOVER which cells to listen to via local
+    Hebbian (no hand-set positions). After training, its receptive-field
+    mass should concentrate at the two input cells, with little leakage."""
+    result = train_xor_with_interneurons(epochs=150, seed=0)
+    w_in = result.interneurons.w_in[0]
+    rows, cols = w_in.shape
+    in_positions = [(1, 1), (1, cols - 2)]
+    rf_at_inputs = sum(float(w_in[r, c]) for r, c in in_positions)
+    rf_total = float(w_in.sum())
+    # At least 95% of the receptive field mass should be at the input cells.
+    assert rf_total > 0.5, f"Receptive field collapsed to ~zero ({rf_total})"
+    assert rf_at_inputs / rf_total > 0.95, (
+        f"Receptive field not concentrated at inputs: "
+        f"{rf_at_inputs:.3f} / {rf_total:.3f}"
+    )

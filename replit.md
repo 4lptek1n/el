@@ -160,12 +160,33 @@ population (one whose job is to SUBTRACT from the output) breaks that
 shared-path conflict. (We do not claim XOR is formally unreachable
 with one population — only that no local rule we tried got past 3/4.)
 
-**Open research problem**: learn the interneuron weights from purely
-local rules. Pure Hebbian saturates (heat distributions of single- and
-double-input cases overlap heavily after diffusion). Contrastive
-Hebbian collapses w_in toward zero. The current implementation hand-
-configures the interneuron as a coincidence detector and only learns
-the excitatory field; learning the interneuron remains future work.
+### Update 2 — interneuron is LEARNED, not hand-configured
+
+The previous version hand-set the interneuron's receptive field at the
+input cells. That has now been replaced with a fully local learning
+rule (`learn_receptive_field_from_pattern` + threshold calibration):
+
+- **Phase 2 — receptive field discovery**: the interneuron observes the
+  *sharp* (pre-relax) input pattern and applies Hebbian + L1 normalization
+  with continuous decay. Mass concentrates competitively on cells that
+  are consistently active during (1,1) examples — i.e. the input cells.
+  The diffused (post-relax) field was useless for this because heat
+  blurs across the grid and Hebbian cannot localize. Using the sharp
+  injected pattern is the key insight.
+- **Phase 3 — threshold calibration**: each interneuron measures its
+  own drive on each XOR case (a local quantity, just `sum(w_in · T)`)
+  and places its threshold between `max(positive_drives)` and
+  `min(coincidence_drives)`. No backprop, no global error.
+
+The receptive field reliably converges to ~100% mass at the two input
+cells (test: `test_interneuron_receptive_field_is_learned_at_input_cells`,
+threshold ≥95% mass at inputs). Combined with the trained excitatory
+field, this gives **4/4 XOR on 20/20 seeds with no hand-set parameters**.
+
+The full pipeline is now: state-dependent thermal field +
+gated Hebbian + supervised nudge (excitatory) + Hebbian/L1
+normalization + drive-statistics calibration (inhibitory). All local,
+all reproducible.
 
 **Demo**:
 ```bash

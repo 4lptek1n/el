@@ -120,6 +120,62 @@ class Interneurons:
                 self.theta[k] += self.cfg.homeo_rate * err_rate
                 self.theta[k] = float(np.clip(self.theta[k], 0.1, 5.0))
 
+    def learn_receptive_field_from_pattern(
+        self,
+        T_pattern: np.ndarray,
+        *,
+        lr: float = 0.10,
+        decay: float = 0.02,
+    ) -> None:
+        """Hebbian update on the *sharp* (pre-relax) input pattern.
+
+        Critical insight: after diffusion relaxes the field, heat spreads
+        across most of the grid and the difference between (1,1) and
+        single-input cases becomes blurred. But at the *injection* moment
+        the pattern is sharp — only the clamped input cells are non-zero.
+        Running Hebbian on this sharp snapshot lets the interneuron
+        discover input-cell-specific receptive fields without supervision.
+
+        Each call: strengthen w_in toward currently-active cells, decay
+        elsewhere, then L1-normalize so weights stay bounded and
+        competitive (some cells must lose mass for others to gain).
+        """
+        for k in range(self.cfg.n):
+            self.w_in[k] += lr * T_pattern
+            self.w_in[k] *= (1.0 - decay)
+            np.clip(self.w_in[k], 0.0, 1.0, out=self.w_in[k])
+            # L1 normalize so total receptive-field mass is bounded.
+            total = self.w_in[k].sum()
+            if total > 1e-6:
+                self.w_in[k] *= (1.5 / total)
+
+    def calibrate_threshold_and_gain(
+        self,
+        positive_drives: list[float],
+        coincidence_drives: list[float],
+        *,
+        margin: float = 0.05,
+        gain: float = 5.0,
+    ) -> None:
+        """Set theta between max(positive) and min(coincidence) drive.
+
+        After the receptive field is learned, set the firing threshold
+        so the interneuron is silent on single-input cases but active on
+        coincident cases. Sets w_out to a fixed gain (could itself be
+        learned via a supervised rule, left for later).
+        """
+        if not coincidence_drives:
+            return
+        pos_max = max(positive_drives) if positive_drives else 0.0
+        coinc_min = min(coincidence_drives)
+        if coinc_min <= pos_max:
+            # Receptive field is too coarse to separate cases; fall back
+            # to a threshold that at least suppresses on coincidence.
+            self.theta[:] = max(0.0, coinc_min - margin)
+        else:
+            self.theta[:] = (pos_max + coinc_min) / 2.0
+        self.w_out[:] = gain
+
     def stats(self) -> dict:
         return {
             "n": self.cfg.n,
