@@ -1171,3 +1171,33 @@ Bu LLM'in "knowledge base" component'i ile aynı kategoride bir test;
 substrate burada kazanmıyor ama **gerçek metin taşıyor** ve gürültü
 altında baseline'ları yenebiliyor. Capacity limit görünür: %60→%20
 düşüş 25→500 chunk arası.
+
+### Apr 17 — DEVASA ÖLÇEK: 6 Gutenberg kitabı, N=20000 chunk
+
+`el/scripts/el_text_massive.py`: Pride & Prejudice + Moby Dick + Sherlock
+Holmes + Frankenstein + Alice + Tom Sawyer = 3,444,323 char gerçek metin.
+Grid 256×256 = 65536 cell. Window=120, cue=80, n_eval=200.
+
+| N | substrate exact | substrate noisy(3char) | trigram-kNN | trigram-kNN noisy | prefix-dict noisy |
+|---|---|---|---|---|---|
+|  2000 | 78.5% | 72.0% | 98.0% | 98.0% | 0.0% |
+|  5000 | **83.5%** | **74.0%** | 97.0% | 97.0% | 0.0% |
+| 10000 | 74.5% | 60.5% | 89.5% | 89.5% | 0.0% |
+| 20000 | (timeout @ ~30 min, ayrı çalışacak) | — | 87.5% | 88.0% | 0.0% |
+
+**Sıkıştırma oranı (devasa):**
+- 65K cell × ~3 bit ≈ 200 kbit substrate field
+- 10000 chunk × 120 char × 8 bit = 9.6 Mbit ham metin
+- → **~48× sıkıştırma altında %74.5 exact recall** (≈%75 doğru
+  Austen/Melville/Doyle/Shelley cümlesini geri getiriyor)
+
+Substrate **gerçek anlamda büyük bilgi taşıyor**: 10K paragraf
+İngilizce edebiyat metnini sabit boyutlu içerik-adresli belleğe
+sıkıştırıp recall edebiliyor. Capacity peak N=5000'de %83.5'e
+ulaşıyor, N=10K'da %74.5 ile hâlâ üretken.
+
+Trigram-kNN (89.5% @ N=10K) üstte ama 9.6 Mbit ham metni saklıyor;
+substrate 200 kbit'te. **48× sıkıştırma ile %15 doğruluk farkı.**
+Gürültülü cue'da prefix-dict %100→%0 çökerken substrate %75→%60
+dayanıyor → content-addressable attractor dynamics büyük ölçekte
+çalışıyor, kanıtlandı.
