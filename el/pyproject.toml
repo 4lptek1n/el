@@ -20,6 +20,7 @@ keywords = [
 ]
 dependencies = [
     "click>=8.0",
+    "numpy>=1.24",
 ]
 
 [project.optional-dependencies]

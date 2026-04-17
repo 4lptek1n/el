@@ -28,6 +28,7 @@ from .parser import Parser
 from .primitives import Action, PrimResult, is_destructive, is_networked
 from .registry import Skill, SkillRegistry
 from .rewards import score_outcome
+from .worldmodel import WorldModelStore
 
 if TYPE_CHECKING:
     from .selfplay import SelfPlayRunner
@@ -63,12 +64,16 @@ class Executor:
     registry: SkillRegistry | None = None
     selfplay: SelfPlayRunner | None = None
     transformer: TransformerAdapter | None = None
+    worldmodel: WorldModelStore | None = None
     auto_confirm: bool = False
 
     def __post_init__(self) -> None:
         self.config.ensure_dirs()
         if self.registry is None:
             self.registry = SkillRegistry(self.config.registry_path)
+        if self.worldmodel is None:
+            self.worldmodel = WorldModelStore(self.config.state_dir)
+            self.worldmodel.load()
 
     def handle(self, raw: str) -> ExecutionResult:
         intents = self.parser.parse(raw)
@@ -121,12 +126,16 @@ class Executor:
         exec_result = ExecutionResult(
             intent=intent,
             skill=skill,
-            actions=skill.actions,
+            actions=actions,
             results=results,
             reward=reward,
             origin="registry",
             duration_ms=duration_ms,
         )
+        # Record what was actually executed (post-override), not the
+        # template stored on the skill, so the world model encodes the
+        # real (state, action) -> outcome association.
+        self._observe_worldmodel(intent, actions, results, reward)
         self._log_event("skill_run", exec_result.to_dict())
         return exec_result
 
@@ -152,6 +161,7 @@ class Executor:
             origin=origin,
             duration_ms=duration_ms,
         )
+        self._observe_worldmodel(intent, actions_t, results, reward)
         self._log_event("candidate_run", exec_result.to_dict())
         return exec_result
 
@@ -251,6 +261,42 @@ class Executor:
             yield result
             if not result.ok and action.name != "noop":
                 return
+
+    def _observe_worldmodel(
+        self,
+        intent: Intent,
+        actions: tuple[Action, ...],
+        results: tuple[PrimResult, ...],
+        reward: float,
+    ) -> None:
+        """Push (state, action, outcome, reward) into the HDM world model.
+
+        Silent on any internal error: world model is auxiliary; a bad
+        observation must never break command execution.
+        """
+        if self.worldmodel is None or not actions:
+            return
+        try:
+            from .worldmodel.hdc import bundle, permute
+
+            hdc = self.worldmodel.hdc
+            state_hv = hdc.encode_intent_atoms(intent.verb, intent.obj, intent.scope)
+            action_hvs = [hdc.encode_action(a.name, a.kwargs) for a in actions]
+            composed = bundle(
+                [permute(hv, k=i) for i, hv in enumerate(action_hvs)]
+            )
+            ok = bool(results) and all(r.ok for r in results)
+            outcome_hv = hdc.encode_outcome(ok=ok, reward=reward)
+            self.worldmodel.world.observe(
+                state_hv=state_hv,
+                action_hv=composed,
+                outcome_hv=outcome_hv,
+                reward=float(reward),
+                ok=ok,
+            )
+            self.worldmodel.save()
+        except Exception as exc:  # pragma: no cover - defensive
+            self._log_event("worldmodel_error", {"error": str(exc)[:200]})
 
     def _log_event(self, kind: str, payload: dict) -> None:
         self.registry.log_event(kind, payload)

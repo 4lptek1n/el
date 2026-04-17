@@ -263,6 +263,81 @@ def cli_transformer_eval(
         ctx.exit(rc)
 
 
+@main.command("think")
+@click.argument("command", nargs=-1, required=True)
+@click.option("--top", type=int, default=5, help="Show this many EFE-ranked plans.")
+@click.pass_context
+def cli_think(ctx: click.Context, command: tuple[str, ...], top: int) -> None:
+    """Plan via Active Inference: rank candidates by Expected Free Energy.
+
+    Does NOT execute. Shows the world model's prediction for each
+    candidate plan (registry hits + selfplay candidates), ranked by
+    EFE = -(pragmatic + 0.4 * epistemic). Lower EFE = preferred.
+    """
+    config = ctx.obj["config"]
+    raw = " ".join(command)
+    intents = Parser().parse(raw)
+    if not intents or intents[0].verb == "unknown":
+        click.echo(json.dumps({"ok": False, "error": "unparseable"}, ensure_ascii=False))
+        ctx.exit(2)
+    intent = intents[0]
+    registry = SkillRegistry(config.registry_path)
+    selfplay = SelfPlayRunner(num_candidates=config.selfplay_candidates)
+
+    candidates: list[tuple] = []
+    for skill in registry.lookup(intent, limit=10):
+        candidates.append((intent, tuple(skill.actions)))
+    for plan in selfplay.candidates(intent):
+        candidates.append((intent, tuple(plan)))
+    if not candidates:
+        click.echo(json.dumps(
+            {"ok": False, "error": "no candidate plans", "intent": intent.to_dict()},
+            ensure_ascii=False,
+        ))
+        ctx.exit(2)
+
+    from .worldmodel import WorldModelStore
+
+    store = WorldModelStore(config.state_dir)
+    store.load()
+    ranked = store.planner.rank(candidates)
+    click.echo(json.dumps(
+        {
+            "intent": intent.to_dict(),
+            "world_model": store.stats(),
+            "ranked": [s.to_dict() for s in ranked[:top]],
+        },
+        indent=2,
+        ensure_ascii=False,
+    ))
+
+
+@main.command("world-stats")
+@click.pass_context
+def cli_world_stats(ctx: click.Context) -> None:
+    """Show HDM world model statistics."""
+    from .worldmodel import WorldModelStore
+
+    config = ctx.obj["config"]
+    store = WorldModelStore(config.state_dir)
+    store.load()
+    click.echo(json.dumps(store.stats(), indent=2, ensure_ascii=False))
+
+
+@main.command("world-reset")
+@click.confirmation_option(prompt="Erase the world model?")
+@click.pass_context
+def cli_world_reset(ctx: click.Context) -> None:
+    """Erase the HDM world model file."""
+    from .worldmodel import WorldModelStore
+
+    config = ctx.obj["config"]
+    store = WorldModelStore(config.state_dir)
+    store.world.reset()
+    store.save()
+    click.echo(json.dumps({"ok": True, "path": str(store.path)}, ensure_ascii=False))
+
+
 @main.command("demo")
 @click.option("--all", "run_all", is_flag=True, help="Run the full demo suite.")
 @click.option("--name", "single", default=None, help="Run a single demo by name.")
@@ -396,6 +471,7 @@ def _run_command(ctx: click.Context, raw: str) -> None:
 for _name in (
     "run", "parse", "seed", "stats", "events", "verbs", "export-training",
     "daemon", "rate", "demo", "train", "transformer-eval",
+    "think", "world-stats", "world-reset",
 ):
     _SUBCOMMAND_NAMES.add(_name)
 
