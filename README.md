@@ -173,19 +173,46 @@ el transformer-eval --max-eval 618
 The corpus is built deterministically from the parser's verb grammar +
 bundled tldr/man examples + a synthetic schema bank, so the same
 `--seed` always produces the same training set. Defaults give 6,185
-examples (4,949 train / 618 val / 618 test) over a 425-token vocab.
+examples; the splitter is **group-aware** — every (intent + action
+sequence) signature lives in exactly one of train/val/test, so
+near-duplicates from synthetic combinatorics cannot leak across splits.
+The `tiny` preset's bundled run yields 5,023 train / 679 val / 483 test
+over a 443-token vocab.
 
-**Bundled checkpoint stats** (`tiny` preset, CPU, seed=42):
+**Bundled checkpoint stats** (`tiny` preset, CPU, seed=42, group-aware
+split, reward-conditioned prefix):
 
 | metric | value |
 |---|---|
 | parameters | 840,832 |
 | training steps | 3,000 |
-| wall-clock (CPU) | 162.8 s |
-| best validation loss | 0.336 |
-| held-out first-action accuracy | **87.5 %** |
-| held-out exact-sequence accuracy | **87.5 %** |
-| random baseline (1/47 primitives) | ~2.1 % |
+| wall-clock (CPU) | ~165 s |
+| best validation loss | 0.364 |
+| held-out first-action accuracy | **79.3 %** |
+| held-out exact-sequence-of-names accuracy | **79.3 %** |
+| held-out kwarg-key-set match | 0 % (see caveat below) |
+| majority-class first-action baseline | 27.7 % |
+| name-Jaccard | 0.79 |
+
+That's ~3× the majority-class baseline on a leakage-free split — the
+model is learning a genuine signal from the (intent → action sequence)
+mapping, not memorising near-duplicates.
+
+**Caveats — what the numbers do *not* claim**:
+- The 79.3 % is **first-action / sequence-of-primitive-names** accuracy.
+  The decoder still hallucinates duplicate / extra kwarg keys (e.g.
+  predicting `('cmd', 'ext', 'timeout')` instead of `('cmd', 'timeout')`),
+  so an exact key-set match scores 0 % at this size — the kwarg
+  vocabulary entered the embedding only at this run and the `tiny`
+  model needs more capacity / steps to lock the kwarg structure down.
+- At inference, the executor **fills argument values from the parsed
+  intent's argument bag**, so the model effectively only needs to
+  predict the right primitive name for the LLM-free pipeline to work
+  end-to-end. The transformer is the routing/ordering layer; the
+  intent parser is the value layer.
+- This is a `tiny` (840 K params) bundled checkpoint trained on CPU in
+  under three minutes. The `small` and `h200` presets are intended for
+  the real numbers — see *Bigger models* below.
 
 ### Bigger models
 

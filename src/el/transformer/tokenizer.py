@@ -139,11 +139,22 @@ class ActionTokenizer:
                     out.append(self.tid(f"w:{w}"))
         return out
 
-    def encode_row(self, intent_dict: dict, actions: list[dict], reward: float) -> list[int]:
+    def encode_prefix(self, intent_dict: dict, target_reward: float = 1.0) -> list[int]:
+        """Encode the inference prefix: command tokens + desired reward token.
+
+        Reward is conditioned by placing the reward token BEFORE the actions
+        so the model learns p(actions | command, target_reward). At
+        inference, prefixing with a high-reward token biases the decoder
+        toward high-reward action sequences.
+        """
         ids = self.encode_command(intent_dict)
-        ids += self.encode_actions(actions)
         ids.append(self.tid("<sep>"))
-        ids.append(self.tid(reward_token(reward)))
+        ids.append(self.tid(reward_token(target_reward)))
+        return ids
+
+    def encode_row(self, intent_dict: dict, actions: list[dict], reward: float) -> list[int]:
+        ids = self.encode_prefix(intent_dict, target_reward=reward)
+        ids += self.encode_actions(actions)
         ids.append(self.tid("<eos>"))
         return ids[: self.max_len]
 

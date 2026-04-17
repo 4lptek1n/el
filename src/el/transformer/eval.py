@@ -53,26 +53,43 @@ def main() -> int:
     test_examples = [examples[i] for i in test_indices][: args.max_eval]
     print(f"[eval] evaluating {len(test_examples)} held-out examples on {device}")
 
+    # majority-class baseline over the test set's first action
+    from collections import Counter
+    first_counter: Counter = Counter(
+        ex.actions[0].name for ex in test_examples if ex.actions
+    )
+    majority_first, majority_first_count = first_counter.most_common(1)[0] if first_counter else ("", 0)
+    majority_baseline = majority_first_count / max(1, len(test_examples))
+
     n = 0
     n_first = 0
     n_seq = 0
+    n_seq_with_args = 0
     jacc_sum = 0.0
     misses: list[dict] = []
     eos = tok.tid("<eos>")
     with torch.no_grad():
         for ex in test_examples:
-            prefix = tok.encode_command(ex.intent.to_dict())
+            prefix = tok.encode_prefix(ex.intent.to_dict(), target_reward=1.0)
             ids = torch.tensor([prefix], dtype=torch.long, device=device)
             out = model.generate(ids, max_new=64, eos_id=eos)
             tokens = tok.decode(out[0].tolist())
             pred = _decode_actions(tokens)
             gold_names = [a.name for a in ex.actions]
             pred_names = [a.name for a in pred]
+            # Compare kwarg KEY SETS only. The simple word tokenizer is
+            # lossy on values (slashes / colons stripped), but values are
+            # filled from the intent at execution time, so what the model
+            # must actually predict correctly is the set of argument keys.
+            gold_kw = [tuple(sorted(k for k, _ in a.kwargs)) for a in ex.actions]
+            pred_kw = [tuple(sorted(k for k, _ in a.kwargs)) for a in pred]
             n += 1
             if pred_names and gold_names and pred_names[0] == gold_names[0]:
                 n_first += 1
             if pred_names == gold_names:
                 n_seq += 1
+                if pred_kw == gold_kw:
+                    n_seq_with_args += 1
             inter = len(set(pred_names) & set(gold_names))
             uni = max(1, len(set(pred_names) | set(gold_names)))
             jacc_sum += inter / uni
@@ -85,8 +102,11 @@ def main() -> int:
     report = {
         "n_eval": n,
         "first_action_accuracy": n_first / max(1, n),
-        "sequence_accuracy": n_seq / max(1, n),
+        "sequence_accuracy_names": n_seq / max(1, n),
+        "sequence_accuracy_with_args": n_seq_with_args / max(1, n),
         "name_jaccard": jacc_sum / max(1, n),
+        "majority_first_action_baseline": majority_baseline,
+        "majority_class": majority_first,
         "sample_misses": misses,
     }
     print(json.dumps({k: v for k, v in report.items() if k != "sample_misses"}, indent=2))

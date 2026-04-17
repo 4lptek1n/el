@@ -37,8 +37,12 @@ def collect_text_corpus(examples) -> list[str]:
     texts: list[str] = []
     for ex in examples:
         texts.append(ex.intent.raw or ex.intent.verb)
+        for k, v in ex.intent.args:
+            texts.append(str(k))
+            texts.append(str(v))
         for a in ex.actions:
-            for _, v in a.kwargs:
+            for k, v in a.kwargs:
+                texts.append(str(k))
                 texts.append(str(v))
     return texts
 
@@ -53,15 +57,39 @@ def build_tokenizer_and_rows(examples, max_len: int = 512) -> tuple[ActionTokeni
     return tok, rows
 
 
-def _split_indices(n: int, val_frac: float, test_frac: float, seed: int) -> tuple[list[int], list[int], list[int]]:
+def _example_signature(ex) -> tuple:
+    """Canonical signature used to group near-duplicates so they all land
+    in the same split (no leakage from synthetic combinatorics)."""
+    return (
+        ex.intent.verb,
+        ex.intent.obj,
+        ex.intent.scope,
+        tuple(sorted(ex.intent.args)),
+        tuple(a.name for a in ex.actions),
+        tuple(tuple(sorted(a.kwargs)) for a in ex.actions),
+    )
+
+
+def _split_indices_grouped(
+    examples, val_frac: float, test_frac: float, seed: int,
+) -> tuple[list[int], list[int], list[int]]:
+    """Group-aware split: every (intent+actions) signature lives in exactly
+    one of train/val/test, eliminating duplicate-row leakage across splits."""
     rng = random.Random(seed)
-    idx = list(range(n))
-    rng.shuffle(idx)
-    n_val = int(n * val_frac)
-    n_test = int(n * test_frac)
-    val = idx[:n_val]
-    test = idx[n_val : n_val + n_test]
-    train = idx[n_val + n_test :]
+    groups: dict[tuple, list[int]] = {}
+    for i, ex in enumerate(examples):
+        groups.setdefault(_example_signature(ex), []).append(i)
+    keys = list(groups.keys())
+    rng.shuffle(keys)
+    n_groups = len(keys)
+    n_val_g = max(1, int(n_groups * val_frac))
+    n_test_g = max(1, int(n_groups * test_frac))
+    val_keys = keys[:n_val_g]
+    test_keys = keys[n_val_g : n_val_g + n_test_g]
+    train_keys = keys[n_val_g + n_test_g :]
+    val = [i for k in val_keys for i in groups[k]]
+    test = [i for k in test_keys for i in groups[k]]
+    train = [i for k in train_keys for i in groups[k]]
     return train, val, test
 
 
@@ -115,7 +143,9 @@ def main() -> int:
     tokenizer, rows = build_tokenizer_and_rows(examples)
     cfg = ModelConfig.preset(args.preset, vocab_size=tokenizer.vocab_size)
 
-    train_idx, val_idx, test_idx = _split_indices(len(rows), args.val_frac, args.test_frac, args.seed)
+    train_idx, val_idx, test_idx = _split_indices_grouped(
+        examples, args.val_frac, args.test_frac, args.seed
+    )
     print(
         f"[train] examples={len(examples)} (train={len(train_idx)} val={len(val_idx)} test={len(test_idx)}) "
         f"vocab={tokenizer.vocab_size} preset={args.preset} params~{cfg.approx_params():,}"

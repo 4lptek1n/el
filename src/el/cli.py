@@ -393,7 +393,10 @@ def _run_command(ctx: click.Context, raw: str) -> None:
         sys.exit(2)
 
 
-for _name in ("run", "parse", "seed", "stats", "events", "verbs", "export-training", "daemon", "rate", "demo"):
+for _name in (
+    "run", "parse", "seed", "stats", "events", "verbs", "export-training",
+    "daemon", "rate", "demo", "train", "transformer-eval",
+):
     _SUBCOMMAND_NAMES.add(_name)
 
 

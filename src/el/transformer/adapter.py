@@ -22,13 +22,22 @@ from .tokenizer import ActionTokenizer
 
 def _validate_actions(actions: list[Action]) -> list[Action]:
     """Drop actions whose primitive is unknown or whose required kwargs
-    are missing. Returns the surviving prefix (stop at first invalid)."""
+    are missing. Skips invalid actions but keeps subsequent valid ones,
+    so a single decoding glitch doesn't lose an entire multi-step plan.
+    """
     out: list[Action] = []
     for a in actions:
         fn = PRIMITIVES.get(a.name)
         if fn is None:
-            break
+            continue
         sig = inspect.signature(fn)
+        accepts_var_kw = any(
+            p.kind is inspect.Parameter.VAR_KEYWORD for p in sig.parameters.values()
+        )
+        accepted = {
+            p.name for p in sig.parameters.values()
+            if p.kind in (inspect.Parameter.POSITIONAL_OR_KEYWORD, inspect.Parameter.KEYWORD_ONLY)
+        }
         provided = {k for k, _ in a.kwargs}
         required = [
             p.name for p in sig.parameters.values()
@@ -36,7 +45,13 @@ def _validate_actions(actions: list[Action]) -> list[Action]:
             and p.kind in (inspect.Parameter.POSITIONAL_OR_KEYWORD, inspect.Parameter.KEYWORD_ONLY)
         ]
         if any(r not in provided for r in required):
-            break
+            continue
+        # Drop unexpected kwargs the decoder hallucinated, so we never
+        # invoke a primitive with arguments it does not accept.
+        if not accepts_var_kw:
+            filtered = tuple((k, v) for (k, v) in a.kwargs if k in accepted)
+            if filtered != a.kwargs:
+                a = Action(name=a.name, kwargs=filtered)
         out.append(a)
     return out
 
@@ -91,7 +106,10 @@ class TransformerAdapter:
         try:
             import torch
 
-            prefix = self.tokenizer.encode_command(intent.to_dict())
+            # Reward-conditioned: prepend the maximum reward token so the
+            # decoder is biased toward the action sequences it learned to
+            # associate with successful executions.
+            prefix = self.tokenizer.encode_prefix(intent.to_dict(), target_reward=1.0)
             ids = torch.tensor([prefix], dtype=torch.long)
             eos = self.tokenizer.tid("<eos>")
             out = self.model.generate(ids, max_new=96, eos_id=eos)
