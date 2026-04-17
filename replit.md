@@ -2,7 +2,7 @@
 
 ## Overview
 
-pnpm workspace monorepo using TypeScript. Each package manages its own dependencies.
+pnpm workspace monorepo using TypeScript (shared backend infra) + Python project `el` cloned from GitHub.
 
 ## Stack
 
@@ -15,6 +15,7 @@ pnpm workspace monorepo using TypeScript. Each package manages its own dependenc
 - **Validation**: Zod (`zod/v4`), `drizzle-zod`
 - **API codegen**: Orval (from OpenAPI spec)
 - **Build**: esbuild (CJS bundle)
+- **Python version**: 3.11
 
 ## Key Commands
 
@@ -25,3 +26,45 @@ pnpm workspace monorepo using TypeScript. Each package manages its own dependenc
 - `pnpm --filter @workspace/api-server run dev` — run API server locally
 
 See the `pnpm-workspace` skill for workspace structure, TypeScript setup, and package details.
+
+## el — Python PC Agent Project
+
+Source: https://github.com/4lptek1n/el
+Location: `/home/runner/workspace/el/`
+Installed as editable package (dev mode) with Python 3.11.
+
+### el Key Commands (run from `/home/runner/workspace/el/`)
+
+```bash
+# CLI is at:
+/home/runner/workspace/.pythonlibs/bin/el
+
+# Seed the skill registry (run once at the start)
+el seed
+
+# Run a natural language command
+el run "list files"
+el run "git durumu"
+
+# Parse a command (see how parser interprets it)
+el parse "dosyaları listele"
+
+# Show skill registry stats
+el stats
+
+# Show recent events
+el events
+
+# List all grammar verbs
+el verbs
+
+# Run tests
+cd el && python3 -m pytest
+
+# Lint with ruff
+cd el && python3 -m ruff check src/
+```
+
+### Optional extras
+- `python3 -m pip install -e "el[train]"` — install PyTorch for the Action Transformer
+- `python3 -m pip install -e "el[http]"` — install httpx for HTTP primitives
