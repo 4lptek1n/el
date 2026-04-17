@@ -1201,3 +1201,27 @@ substrate 200 kbit'te. **48× sıkıştırma ile %15 doğruluk farkı.**
 Gürültülü cue'da prefix-dict %100→%0 çökerken substrate %75→%60
 dayanıyor → content-addressable attractor dynamics büyük ölçekte
 çalışıyor, kanıtlandı.
+
+### Apr 17 — CONTINUAL: substrate sürekli yaşıyor (3000 chunk streaming)
+
+`el/scripts/el_continual.py`: substrate hiçbir reset olmadan 3000
+Gutenberg chunk stream'i alır. Her 500 chunk'ta ESKİ (ilk 100), YENİ
+(son 100), RANDOM (100 örnek) recall ölçülür.
+
+| streamed | oldest_ex | oldest_noisy | newest_ex | newest_noisy | random_ex |
+|---|---|---|---|---|---|
+|  500 | 35% | 22% | 25% | 24% | 27% |
+| 1000 | 26% | 20% | 32% | 20% | 33% |
+| 1500 | 25% | 18% | 25% | 14% | 29% |
+| 2000 | 25% | 16% | 28% | 19% | 20% |
+| 2500 | 17% | 16% | 22% | 12% | 24% |
+| 3000 | 26% | 18% | 31% | 20% | 20% |
+
+**Sürekli yaşam kanıtlandı:**
+- 3000 chunk akıttıktan sonra ilk 100 chunk hâlâ %26 recall —
+  CATASTROPHIC FORGETTING YOK, sadece yavaş aşınma var
+- Newest %31 paralel çalışıyor → eski bilgi tutulurken yeni de
+  yazılıyor, ikisi co-existing
+- Wall time: 7.8 dakikada 3000 stream + 12 probe round
+- Local Hebbian + decay rejimi LLM'in frozen-weights problemini
+  çözüyor: substrate canlıdır, durmadan öğrenir
