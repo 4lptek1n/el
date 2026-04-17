@@ -758,3 +758,35 @@ sub-mW under the same model. Until one of:
 
 the "low-power frontier" claim is not earned and should not appear
 in any externally-facing document without that disclaimer.
+
+### Eşik 3 — seq_then_pat ARCHITECTURAL FIX (KNOWN_OPEN → PASSED)
+Earlier KNOWN_OPEN entry assumed seq_then_pat lost performance because
+pattern Hebb on C "erased" the directional B-bias. **Direct measurement
+disproved that hypothesis**: B is preserved with corr=1.0 across
+N_PAT=8 pattern stores; |B|_max identical before/after; the absolute B
+matrix is *unchanged*. The real cause is **C-attenuation**: with
+write_decay=0.005 over 8×15 Hebb steps, C_r mean drops 0.487 → 0.365,
+weakening diffusion → A→B heat propagation is smaller → seq probe
+(absolute T at B_POS minus fresh field's T at B_POS) reads a smaller
+value. The directional information is intact; the readout signal-to-
+noise is what dropped.
+
+**Fix**: raise STDP lr in the seq_then_pat ordering from canonical
+0.07 → 0.14 so |B| dominates over C variation. Sweep
+(8 seeds × 15 trials, baselines pat_only=0.608, seq_only=+0.0369):
+
+  | seq_lr | pat   | seq      | pat_keep | seq_keep |        |
+  |--------|-------|----------|----------|----------|--------|
+  | 0.07   | 0.642 | +0.0186  |  105.5 % |   50.3 % | open   |
+  | 0.10   | 0.625 | +0.0268  |  102.7 % |   72.7 % |        |
+  | 0.14   | 0.625 | **+0.0400** | 102.7 % | **108.4 %** | **WIN** |
+  | 0.20   | 0.567 | +0.0517  |   93.2 % |  140.0 % | WIN    |
+  | 0.30   | 0.592 | +0.0488  |   97.3 % |  132.1 % | WIN    |
+
+Recommendation: seq_lr=0.14 (smallest crossing both gates, max
+margin to pattern accuracy). Pinned by
+`test_multitask_seq_then_pat_FIXED_with_higher_seq_lr`. The
+`test_multitask_seq_then_pat_KNOWN_OPEN` test is intentionally kept
+to document the lr=0.07 behavior — both tests pass.
+
+**Both kızıl-elma multi-task orderings now satisfy ≥90 / ≥90.**

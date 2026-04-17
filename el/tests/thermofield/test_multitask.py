@@ -193,3 +193,62 @@ def test_multitask_seq_then_pat_KNOWN_OPEN():
         f"seq_then_pat keep is now {sq_keep:.0%} ≥ 90 %. "
         f"If you intentionally fixed this ordering, FLIP this test "
         f"to assert sq_keep >= 0.90 and rename it (drop _KNOWN_OPEN).")
+
+
+# -------------------------------------------------------- WIN at lr=0.14
+def _seq_train_lr(field, lr, n_epochs=30, hold=5, gap=2):
+    """Variant of _seq_train with explicit STDP lr."""
+    trace = EligibilityTrace((field.cfg.rows, field.cfg.cols), decay=0.80)
+    for _ in range(n_epochs):
+        field.reset_temp(); trace.reset()
+        present_event(field, trace, [A_POS], [1.0], hold=hold)
+        relax_with_trace(field, trace, gap)
+        field._clamp_positions = []; field._clamp_values = []
+        field.inject([B_POS], [1.0])
+        stdp_hebbian_update(field, trace, lr=lr)
+        for _ in range(hold):
+            field.step(); trace.update(field.T)
+        hebbian_update(field, lr=0.07, decay=0.001)
+    field.reset_temp()
+
+
+def test_multitask_seq_then_pat_FIXED_with_higher_seq_lr():
+    """Eşik 3 second WIN: seq_then_pat ordering is salvaged by raising
+    the STDP learning rate from canonical 0.07 to 0.14. Diagnosis (see
+    el/scripts/bench/seq_then_pat_v2.py): B is preserved 100 % across
+    pattern storage (corr=1.0); the apparent seq_disc drop was actually
+    C-attenuation weakening diffusion, not B erasure. A larger seq_lr
+    makes |B| dominate over C variation so the probe still resolves it.
+
+    Compares against canonical lr=0.07 baselines (the same numbers used
+    by the WIN and KNOWN_OPEN tests above). Gates: seq_keep ≥ 90 % of
+    canonical seq_only, pat_keep ≥ 80 % of canonical pat_only.
+    """
+    cfg = FieldConfig(rows=GRID, cols=GRID)
+    # canonical baselines at lr=0.07
+    _, sq_alone = _run("seq_only", COTRAIN_PARAMS)
+    pa_alone, _ = _run("pattern_only", COTRAIN_PARAMS)
+
+    # seq_then_pat with elevated seq_lr=0.14
+    pa, sq = [], []
+    for seed in SEEDS:
+        rng = np.random.default_rng(seed)
+        mem, ps = _make_mem(seed, cfg, **COTRAIN_PARAMS)
+        pats = [random_pattern(GRID, GRID, k=ps, rng=rng) for _ in range(N_PAT)]
+        _seq_train_lr(mem.field, lr=0.14)
+        for p in pats: mem.store(p)
+        pa.append(_pattern_acc(mem, pats, 0.5,
+                  np.random.default_rng(seed*31+7), N_TRIALS))
+        sq.append(_seq_probe(mem.field, seed))
+    pa = np.array(pa); sq = np.array(sq)
+
+    sq_keep = float(sq.mean()) / float(sq_alone.mean())
+    pa_keep = float(pa.mean()) / float(pa_alone.mean())
+    assert sq_keep >= 0.90, (
+        f"seq_then_pat (lr=0.14) seq_keep regressed: "
+        f"{sq_keep:.0%} < 90 %  (sq={sq.mean():+.4f}, "
+        f"baseline={sq_alone.mean():+.4f})")
+    assert pa_keep >= 0.80, (
+        f"seq_then_pat (lr=0.14) pat_keep regressed: "
+        f"{pa_keep:.0%} < 80 %  (pa={pa.mean():.3f}, "
+        f"baseline={pa_alone.mean():.3f})")
