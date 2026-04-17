@@ -1276,3 +1276,88 @@ oldest/newest/random recall ölçüldü.
 LLM eşdeğer eğitim/güncelleme için günler-haftalar gerektirirken,
 substrate aynı bilgiyi 21 dakikada online stream'liyor, sonra eski
 bilgiyi unutmadan üzerine yenisini yazmaya devam edebiliyor.
+
+### Apr 17 son tur — Eşik 3, 4, 2-extreme HONEST kapatma
+
+Session plan T001-T003 sonuçları (probe scriptleri + regresyon testleri).
+
+**Eşik 3 — multi-task substrate (PASSED, `scripts/multitask_probe.py`)**
+Aynı Field üzerinde C-Hebb pattern memory + B-channel sequence STDP koşumu:
+
+| condition                        | pattern acc | seq disc |
+|---|---|---|
+| pattern_only                     | 0.608 | — |
+| seq_only                         | — | +0.0369 |
+| multi_pat_then_seq (lr=0.07)     | 0.600 | +0.0346 |
+| multi_seq_then_pat (lr=0.07)     | 0.642 | +0.0186 |
+| multi_seq_then_pat (lr=0.14)     | 0.625 | +0.0400 |
+
+- pat→seq: pat_keep=99%, seq_keep=94% → **WIN**
+- seq→pat (lr=0.14): pat_keep=103%, seq_keep=108% → **WIN**
+- 5 regresyon testi (`tests/thermofield/test_multitask.py`) yeşil.
+
+**Eşik 4 — replay/persistence (PASSED, `scripts/persistence_probe.py`)**
+PatternMemory.save/load .npz round-trip + train→save→load→train continuation.
+Grid 28×28, n_first=4, n_second=4 (non-saturated), 8 seed.
+
+> **Düzeltme not'u (architect review):** ilk versiyonda B-only kontrolün
+> tahminleri combined-truth label uzayına offset edilmemişti, B örnekleri
+> yapısal olarak skor alamıyordu ve "+0.216 fark" yapay olarak şişmişti.
+> Hem probe hem regresyon testi `pred + label_offset` map'i eklenerek
+> düzeltildi. Saturated rejimde (n=16+16) gap kapanıyor; non-saturated
+> rejimde (n=4+4) gap honest şekilde +0.430.
+
+| condition                          | acc | sem |
+|---|---|---|
+| mono (8 scratch)                   | 0.898 | 0.033 |
+| load+continue (4+4)                | 0.898 | 0.033 |
+| B-only scratch (no A memory)       | 0.469 | 0.008 |
+| round-trip before save             | 0.906 | 0.016 |
+| round-trip after  load             | 0.906 | 0.016 |
+
+- load_keep = **100.00%** (load+continue ≡ mono)
+- round-trip drift = **0.000** (bit-perfect serialization)
+- B-only scratch kontrolünü +0.430 ile geçer → persistence gerçek katma değer.
+- 3 regresyon testi (`tests/thermofield/test_pattern_memory_persistence.py`) yeşil.
+
+**Eşik 2 EXTREME — büyük grid kapasitesi (PASSED, `scripts/extreme_capacity_lite.py`)**
+2 seed × 2 trial/pattern, ~%1 yoğunluk, %50 cue corruption:
+
+| grid    | N    | k_density | chance | acc           | write | recall | verdict |
+|---|---|---|---|---|---|---|---|
+| 64×64   | 32   |  40 | 0.031 | 0.984 ± 0.011 | 0.0s  | 0.1s   | PASS |
+| 64×64   | 64   |  40 | 0.016 | 0.625 ± 0.011 | 0.1s  | 0.2s   | PASS |
+| 128×128 | 64   | 163 | 0.016 | 0.996 ± 0.003 | 0.2s  | 0.7s   | PASS |
+| 128×128 | 128  | 163 | 0.008 | 0.879 ± 0.014 | 0.3s  | 1.8s   | PASS |
+| 192×192 | 128  | 368 | 0.008 | 0.996 ± 0.003 | 0.7s  | 4.5s   | PASS |
+| 224×224 | 128  | 501 | 0.008 | **1.000 ± 0.000** | 1.0s  | 5.3s   | PASS |
+| 224×224 | 256  | 501 | 0.004 | **1.000 ± 0.000** | 2.3s  | 14.6s  | PASS |
+
+Substrate MNIST-grid ölçeğinde **N=256 patternde mükemmel recall** veriyor —
+başka bir kırılma noktası bu run'larda görülmedi.
+
+### Apr 17 — USE testi (book classification) HONEST NEGATİF
+
+User mandate: "boş bilgi ile doldurma, bilgiyi nasıl kullandığına bak."
+5 kitap (Austen/Melville/Doyle/Shelley/Twain), 2000 train + 500 test
+paragraph, win=200, grid=192×192. `scripts/el_use_classify_v2.py`.
+
+| classifier                | Austen | Melv | Doyle | Shel | Twain | OVERALL |
+|---|---|---|---|---|---|---|
+| centroid (trigram)        | 0.670 | 0.330 | 0.760 | 0.770 | 0.510 | **0.608** |
+| kNN-1 (trigram brute)     | 0.550 | 0.350 | 0.520 | 0.570 | 0.450 | 0.488 |
+| substrate top-25 vote     | 0.070 | 0.350 | 0.250 | 0.310 | 0.260 | 0.248 |
+| substrate per-class field | 0.250 | 0.200 | 0.240 | 0.160 | 0.250 | 0.220 |
+
+Random baseline = 0.20. Substrate'in raw recall + Jaccard top-K voting
+veya per-class ayrı field versiyonu ikisi de **chance hizasında** kaldı.
+Trigram centroid 60.8% ile substrate'in 3× üstünde.
+
+**Honest verdict:** substrate kanıtlanmış güçlü tarafları (assosiyatif
+hatırlama, devasa metin sıkıştırma, online stream, gürültü-dayanıklılık,
+generation) bu USE testinde aşağı yukarı işe yaramadı. Substrate'in bir
+chunk'ı geri çağırma yeteneği "hangi yazara ait" sınıflandırma sinyalini
+yeterince çıkarmıyor — sınıf bilgisi field'da dağıtık olarak değil
+örnek-bazlı kodlu, bu yüzden top-K vote 5-yönlü ayrımı yapamıyor.
+Bunu gizlemiyoruz: substrate MEMORY/RETRIEVAL substratıdır, downstream
+discriminative görevler için ek bir okuyucu (linear head) gerekir.

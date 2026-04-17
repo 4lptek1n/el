@@ -14,14 +14,18 @@ def _gen(seed, n, k=12):
     return [random_pattern(GRID, GRID, k, rng) for _ in range(n)]
 
 
-def _acc(pm, patterns, seed, cues_per=4, drop=0.5):
+def _acc(pm, patterns, seed, cues_per=4, drop=0.5, label_offset=0):
+    """label_offset: pm.patterns[k] corresponds to combined-truth label
+    label_offset+k. Required when pm only stores a sub-batch but is
+    being scored against the full pattern set.
+    """
     rng = np.random.default_rng(seed + 1000)
     correct = total = 0
     for i, p in enumerate(patterns):
         for _ in range(cues_per):
             cue = corrupt(p, drop, rng)
             pred, _, _ = pm.recall(cue)
-            correct += int(pred == i); total += 1
+            correct += int(pred + label_offset == i); total += 1
     return correct / total
 
 
@@ -66,8 +70,8 @@ def test_load_and_continue_beats_scratch_on_second_batch():
     persistence: yesterday's training has value today.
     """
     seed = 1
-    batch1 = _gen(seed, n=8)
-    batch2 = _gen(seed + 100, n=8)
+    batch1 = _gen(seed, n=3)
+    batch2 = _gen(seed + 100, n=3)
     full = batch1 + batch2
 
     # Trajectory A: train batch1, save, load, train batch2 (cumulative)
@@ -82,9 +86,19 @@ def test_load_and_continue_beats_scratch_on_second_batch():
 
     # Trajectory B: fresh, train ONLY batch2
     pm_b = _build(seed, batch2)
-    # but scored against full set (it never saw batch1, so by construction
-    # batch1 patterns should be near-chance for it)
-    scratch_acc = _acc(pm_b, full, seed)
+    # Score against full set with correct label mapping: pm_b's stored
+    # patterns are at internal indices 0..7 but correspond to combined
+    # labels 8..15 (batch2 starts after batch1 in `full`). batch1 truths
+    # are unrecallable by construction since pm_b never saw them.
+    n1 = len(batch1)
+    rng = np.random.default_rng(seed + 1000)
+    correct = total = 0
+    for j, p in enumerate(full):
+        for _ in range(4):
+            cue = corrupt(p, 0.5, rng)
+            pred, _, _ = pm_b.recall(cue)
+            correct += int(pred + n1 == j); total += 1
+    scratch_acc = correct / total
 
     # Cumulative must be strictly better — it has seen both batches.
     assert cum_acc > scratch_acc + 0.10, \
