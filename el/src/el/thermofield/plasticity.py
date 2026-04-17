@@ -73,6 +73,46 @@ def gated_hebbian_update(
     np.clip(field.C_down, 0.05, 1.0, out=field.C_down)
 
 
+def lateral_inhibition_update(
+    field: Field,
+    input_positions,
+    *,
+    target: float,
+    target_low_thresh: float = 0.3,
+    co_active_thresh: float = 0.5,
+    lr: float = 0.08,
+) -> None:
+    """Mutual-suppression rule between simultaneously-active inputs.
+
+    Biologically inspired by lateral inhibitory interneurons: when several
+    input cells fire together, weaken their downward (toward-output) paths
+    so the combined signal does not reach the output. Only triggers when
+    the target says the output should stay low — this carves a (1,1)-
+    specific shunt without disturbing single-input cases.
+
+    Mechanism: if the minimum input temperature exceeds `co_active_thresh`
+    (i.e. ALL inputs are active) and target is below `target_low_thresh`,
+    decrease C_down at each input cell proportionally to co-activation.
+    """
+    if target > target_low_thresh:
+        return
+    T = field.T
+    acts = np.array([T[r, c] for r, c in input_positions])
+    co_active = float(np.min(acts))  # AND-like across inputs
+    if co_active < co_active_thresh:
+        return
+    # Weaken C_down across the entire band spanned by inputs (the row
+    # between them), so heat that diffuses laterally cannot find an
+    # alternate downward path. This is the destructive-interference path.
+    rows = sorted({r for r, _ in input_positions})
+    cols = [c for _, c in input_positions]
+    c_min, c_max = min(cols), max(cols)
+    for r in rows:
+        if r < field.C_down.shape[0]:
+            field.C_down[r, c_min:c_max + 1] -= lr * co_active
+    np.clip(field.C_down, 0.05, 1.0, out=field.C_down)
+
+
 def supervised_nudge(
     field: Field,
     output_positions,
