@@ -1361,3 +1361,53 @@ yeterince çıkarmıyor — sınıf bilgisi field'da dağıtık olarak değil
 örnek-bazlı kodlu, bu yüzden top-K vote 5-yönlü ayrımı yapamıyor.
 Bunu gizlemiyoruz: substrate MEMORY/RETRIEVAL substratıdır, downstream
 discriminative görevler için ek bir okuyucu (linear head) gerekir.
+
+### Apr 17 — Frozen Substrate + Streaming Ridge (TB-scale architecture)
+
+User mandate (TR): "kitap değil gerçek büyük dev terabaytlarca", "frozen
+çekirdek + üstüne öğrenen okuyucu". Substrate dondurulur, üstüne
+trainable lineer readout geçirilir.
+
+**Mimari:**
+
+  text → text_to_pattern (char n-gram hash) → cue
+       → FrozenSubstrate.encode (relax-only, write=False arrays) → feat ∈ R^D
+       → StreamingRidge.partial_fit (A=DxD, B=DxK accumulators)
+       → solve once via Cholesky → W ∈ R^{D×K}
+       → predict = argmax(X @ W + b)
+
+**TB-scale property:** ridge bellek ayak izi `O(D² + D·K)` —
+korpus boyutundan bağımsız. D=512, K=6 için **2 MB sabit**. Substrate
+ayrı `O(grid²)` = 577 KB. Bir trilyon chunk akıtsanız bile aynı kalır.
+`_class_count` ile kapalı-form intercept çözümü, fingerprint() ile
+substrate bütünlük kontrolü.
+
+**Honest sonuç (6-class, 4000 train + 600 test, win=200, grid=192,
+D=512, relax=12, λ=1.0):**
+
+| classifier                       | Aust | Melv | Doyle | Shel | Carr | Twain | OVERALL |
+|----------------------------------|------|------|-------|------|------|-------|---------|
+| frozen-substr + streaming ridge  | 0.48 | 0.45 | 0.42 | 0.44 | 0.58 | 0.56 | **0.488** |
+| (raw substrate top-K vote, prev) | —    | —    | —    | —    | —    | —    | 0.248   |
+| (trigram centroid, prev)         | —    | —    | —    | —    | —    | —    | 0.608   |
+
+Random = 0.167 (6 sınıf). **Frozen+ridge raw substrate'i ~2× geçti**
+(0.25 → 0.49) ama trigram centroid'in altında (0.61). D=1024, relax=18
+ile denenen daha büyük config 0.43'e DÜŞTÜ — feature noise.
+
+**Verdict:** Mimari çalışıyor, substrate gerçekten dondurulu kalıyor
+(fingerprint sabit), bellek gerçekten N'den bağımsız (3996+600 chunk
+sonrası ridge_KB=2076, sub_KB=577, RSS=78MB). Ama **substrate'in
+encode'u henüz iyi bir özellik çıkarıcı değil** — ham trigram'dan
+geri kalıyor. Bir sonraki adım: encode'u richer (multi-relax-snapshot,
+multi-electrode-pool, çoklu cue çeşitlemesi) yapmak veya substrate
+imprint'i sınıf-koşullu hale getirmek.
+
+Yeni dosyalar:
+- `el/src/el/thermofield/frozen.py` — FrozenSubstrate (read-only weights, fingerprint)
+- `el/src/el/thermofield/readout.py` — StreamingRidge (closed-form, intercept solved analytically)
+- `el/scripts/el_frozen_classify.py` — end-to-end probe
+- `el/tests/thermofield/test_frozen_substrate.py` (5 test ✓)
+- `el/tests/thermofield/test_streaming_ridge.py` (7 test ✓)
+
+Total: **169 test green**.
