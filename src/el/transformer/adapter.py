@@ -12,10 +12,33 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
 
+import inspect
+
 from ..config import Config
 from ..intent import Intent
-from ..primitives import Action
+from ..primitives import Action, PRIMITIVES
 from .tokenizer import ActionTokenizer
+
+
+def _validate_actions(actions: list[Action]) -> list[Action]:
+    """Drop actions whose primitive is unknown or whose required kwargs
+    are missing. Returns the surviving prefix (stop at first invalid)."""
+    out: list[Action] = []
+    for a in actions:
+        fn = PRIMITIVES.get(a.name)
+        if fn is None:
+            break
+        sig = inspect.signature(fn)
+        provided = {k for k, _ in a.kwargs}
+        required = [
+            p.name for p in sig.parameters.values()
+            if p.default is inspect.Parameter.empty
+            and p.kind in (inspect.Parameter.POSITIONAL_OR_KEYWORD, inspect.Parameter.KEYWORD_ONLY)
+        ]
+        if any(r not in provided for r in required):
+            break
+        out.append(a)
+    return out
 
 
 @dataclass
@@ -26,10 +49,20 @@ class TransformerAdapter:
 
     @classmethod
     def try_load(cls, config: Config) -> Optional["TransformerAdapter"]:
-        ckpt_dir = config.state_dir / "checkpoints" / "action-transformer"
-        tok_path = ckpt_dir / "tokenizer.json"
-        if not tok_path.exists():
+        # First look in the user's state dir; fall back to the bundled
+        # checkpoint shipped inside the repo (artifacts/el/checkpoints/...).
+        candidates = [
+            config.state_dir / "checkpoints" / "action-transformer",
+            Path(__file__).resolve().parents[2].parent / "checkpoints" / "action-transformer",
+        ]
+        ckpt_dir: Optional[Path] = None
+        for cand in candidates:
+            if (cand / "tokenizer.json").exists():
+                ckpt_dir = cand
+                break
+        if ckpt_dir is None:
             return None
+        tok_path = ckpt_dir / "tokenizer.json"
         try:
             tokenizer = ActionTokenizer.load(tok_path)
         except Exception:
@@ -63,7 +96,7 @@ class TransformerAdapter:
             eos = self.tokenizer.tid("<eos>")
             out = self.model.generate(ids, max_new=96, eos_id=eos)
             tokens = self.tokenizer.decode(out[0].tolist())
-            return _decode_actions(tokens)
+            return _validate_actions(_decode_actions(tokens))
         except Exception:
             return []
 

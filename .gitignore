@@ -10,6 +10,9 @@ runs/
 .el_cache/
 .el_state/
 checkpoints/
+# Ship the bundled trained tiny checkpoint with the repo:
+!checkpoints/action-transformer/
+!checkpoints/action-transformer/**
 *.sqlite3-journal
 build/
 dist/

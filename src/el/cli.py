@@ -201,6 +201,68 @@ def cli_rate(ctx: click.Context, direction: str) -> None:
     click.echo(json.dumps({"ok": True, "skill_id": skill_id, "direction": direction, "weight": updated.weight}))
 
 
+@main.command("train")
+@click.option("--preset", type=click.Choice(["tiny", "small", "h200"]), default="tiny")
+@click.option("--steps", type=int, default=2000)
+@click.option("--batch", type=int, default=16)
+@click.option("--lr", type=float, default=3e-4)
+@click.option("--device", type=click.Choice(["auto", "cpu", "cuda", "mps"]), default="auto")
+@click.option("--out", type=click.Path(), default=None, help="Checkpoint dir (default: <state>/checkpoints/action-transformer).")
+@click.option("--no-synth", is_flag=True, help="Use only bundled corpus, skip synthetic.")
+@click.option("--synth-per-verb", type=int, default=120)
+@click.option("--extra", type=click.Path(exists=True), default=None)
+@click.pass_context
+def cli_train(
+    ctx: click.Context, preset: str, steps: int, batch: int, lr: float,
+    device: str, out: str | None, no_synth: bool, synth_per_verb: int, extra: str | None,
+) -> None:
+    """Train the Action Transformer on bundled+synthetic corpus."""
+    config = ctx.obj["config"]
+    out_dir = Path(out) if out else config.state_dir / "checkpoints" / "action-transformer"
+    argv = [
+        "el.transformer.train",
+        "--preset", preset, "--steps", str(steps), "--batch", str(batch),
+        "--lr", str(lr), "--device", device, "--out", str(out_dir),
+        "--synth-per-verb", str(synth_per_verb),
+    ]
+    if no_synth:
+        argv.append("--no-synth")
+    if extra:
+        argv += ["--extra", extra]
+    sys.argv = argv
+    from .transformer.train import main as train_main
+    rc = train_main()
+    if rc != 0:
+        ctx.exit(rc)
+
+
+@main.command("transformer-eval")
+@click.option("--checkpoint", type=click.Path(exists=True), default=None,
+              help="Checkpoint dir (default: <state>/checkpoints/action-transformer).")
+@click.option("--max-eval", type=int, default=300)
+@click.option("--device", type=click.Choice(["auto", "cpu", "cuda", "mps"]), default="auto")
+@click.option("--report", type=click.Path(), default=None)
+@click.pass_context
+def cli_transformer_eval(
+    ctx: click.Context, checkpoint: str | None, max_eval: int, device: str, report: str | None,
+) -> None:
+    """Evaluate a trained Action Transformer on the held-out test split."""
+    config = ctx.obj["config"]
+    ckpt = Path(checkpoint) if checkpoint else config.state_dir / "checkpoints" / "action-transformer"
+    argv = [
+        "el.transformer.eval",
+        "--checkpoint", str(ckpt),
+        "--max-eval", str(max_eval), "--device", device,
+    ]
+    if report:
+        argv += ["--report", report]
+    sys.argv = argv
+    from .transformer.eval import main as eval_main
+    rc = eval_main()
+    if rc != 0:
+        ctx.exit(rc)
+
+
 @main.command("demo")
 @click.option("--all", "run_all", is_flag=True, help="Run the full demo suite.")
 @click.option("--name", "single", default=None, help="Run a single demo by name.")
