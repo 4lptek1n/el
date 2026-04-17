@@ -1,0 +1,135 @@
+Zamanla değil, eşik geçince.
+
+Bu sistem “büyük model” olduğunda değil,
+küçük çekirdekten büyük kapasiteye ölçeklenince o şeye dönüşecek.
+
+Şu an sizde olan şey:
+	•	çalışan substrate
+	•	learning law başlangıcı
+	•	inhibition/WTA etkisi
+	•	memory/pattern recall
+	•	crossbar/spike omurgası
+
+Bu hâliyle:
+
+proto-core
+
+Henüz “büyük model” değil.
+
+Ne zaman “büyük” olur?
+
+Bence şu 4 eşik geçilince:
+
+1. Kapasite gerçekten büyüyünce
+
+Şu an 2/4/6 pattern seviyesindesin.
+“Büyük” demek için en az:
+	•	16
+	•	32
+	•	64
+	•	128 pattern
+
+altında hâlâ recall lift kalmalı.
+
+Yani:
+
+oyuncak hafıza değil, yoğun hafıza
+
+⸻
+
+2. Grid / substrate ölçeği büyüyünce
+
+Şu an 128x128 XOR / layered / spike tarafındasın.
+
+“Büyük model” hissi için bu yapının:
+	•	256x256
+	•	512x512
+	•	1024x1024
+
+gibi büyümesi ve çökmemesi lazım.
+
+Yani:
+
+parametre değil, iletkenlik/bağ/alan ölçeği
+
+⸻
+
+3. Aynı çekirdek birden fazla işi taşıyınca
+
+Şu an pattern memory ve benchmark sinyali var.
+
+“Büyük sistem” olduğu an:
+	•	pattern recall
+	•	coding behavior
+	•	computer-use
+	•	terminal
+	•	world-state
+	•	language surface
+
+aynı çekirdeğe bağlanacak.
+
+O an:
+
+tek görevli substrate olmaktan çıkar,
+genel substrate olur.
+
+⸻
+
+4. Replay gerçekten bilgi biriktirince
+
+Büyük model olmanın asıl işareti bu:
+
+her yeni run’dan sonra biraz daha iyi mi?
+
+Yani:
+	•	snapshot replay
+	•	failed_commands
+	•	blocker memory
+	•	prior store
+	•	plasticity
+
+bunlar sadece log değil, kalıcı kapasite üretmeli.
+
+⸻
+
+En dürüst cevap
+
+Şu an büyük model değilsin.
+
+Ama “büyük model olma yolu”nu açmış olabilirsin.
+
+Çünkü senin büyümen şöyle olmayacak:
+	•	daha çok token
+	•	daha çok GPU
+	•	daha çok parametre
+
+ile değil,
+
+daha çok pattern kapasitesi
+daha çok katmanlı alan
+daha çok davranış hafızası
+daha çok çapraz görev taşıma
+
+ile olacak.
+
+Tek cümlelik kriter
+
+Bu sistemi ben “büyük model” diye ancak şu zaman derim:
+
+Çekirdek, 32+ seed altında, 16–64+ pattern kapasitesiyle, birden fazla görev ailesinde pozitif öğrenme üretirse.
+
+O noktadan sonra artık:
+	•	toy substrate değil
+	•	gerçek büyük çekirdek
+
+dersin.
+
+Daha da net
+
+Senin “büyük model” anın:
+
+boyut artınca bozulmadığı ilk gün.
+
+İstersen sana şimdi direkt
+“küçük çekirdekten büyük modele geçiş için teknik eşik tablosu”
+çıkarayım.

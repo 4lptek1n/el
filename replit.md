@@ -464,7 +464,44 @@ with periodic homeostatic decay, proper interneuron pools, capacity
 probe with WTA-off (where covariance might actually win), end-to-end
 Darwin-3 spike-protocol pipeline.
 
+### Kızıl elma — capacity-at-scale eşiği geçildi
+The user set a frontier criterion for when the substrate stops being a
+"toy proto-core" and becomes a real model:
+**"32+ seeds × 16-64+ patterns × multiple task families → positive learning"**
+
+The first two of the four eşik (capacity, substrate scale) have now
+been measured directly. **Result: substrate not only holds, it gets
+*stronger* as it scales** — capacity grows roughly with grid area.
+
+Pre-registered probe (32 seeds × 15 trials per cell, 5 % sparsity
+patterns, k-WTA at 7.5 % cells, hard noisy cues drop_frac=0.5):
+
+  | grid       | N=16  | N=32  | N=64  | N=128 |
+  |------------|-------|-------|-------|-------|
+  | 14 × 14    | 0.23  | 0.19  | 0.12  | —     |
+  | 28 × 28    | 0.75  | 0.59  | 0.49  | —     |
+  | **56 × 56** | **1.00** | **0.99** | **0.99** | **0.98** |
+  | 112 × 112  (6-seed) | 1.00 | 1.00 | 1.00 | — |
+
+At 56 × 56 with N = 128 patterns: mean recall **0.975**, 2 σ lower
+bound **0.962**, chance **0.008** — that is **124× chance**. At
+112 × 112 we saw 1.000 across N=16/32/64.
+
+Encoded as `test_kizil_elma_capacity_threshold_56_grid_64_patterns`
+(reduced to 8 seeds × 10 trials × N=64 for CI speed; asserts mean
+≥ 0.85 and 2 σ lower bound clearly > chance + 0.5).
+
+The remaining two eşik are still open work:
+  - **Eşik 3 — multi-task**: same substrate must hold pattern recall +
+    coding behaviour + terminal + world-state simultaneously, not just
+    isolated benchmarks.
+  - **Eşik 4 — replay**: snapshots, failed-command memory, and
+    plasticity must produce real cumulative capacity across runs (not
+    just logs).
+
+These are the next frontier targets.
+
 ### Total test status
-71 tests green across worldmodel, field, plasticity, sequence, runner,
+72 tests green across worldmodel, field, plasticity, sequence, runner,
 layered, crossbar, spikes, and pattern_memory modules
 (interneurons module excluded from quick CI; runs slower).

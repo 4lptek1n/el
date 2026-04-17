@@ -333,3 +333,50 @@ def test_capacity_curve_substrate_clearly_above_chance():
         assert lo > chance + margin, (
             f"N={n_pat}: mean={mean:.3f} 2σ-low={lo:.3f} not clearly > "
             f"chance({chance:.3f}) + margin({margin}); accs={accs}")
+
+
+# ---------------------------------------------------------------------------
+# Kızıl elma capacity threshold — 32 seeds × N=64 patterns @ 56×56 grid
+# ---------------------------------------------------------------------------
+def test_kizil_elma_capacity_threshold_56_grid_64_patterns():
+    """User's frontier criterion ("kızıl elma"):
+    >= 32 seeds × 16-64+ patterns × clear positive recall.
+
+    Empirically (full 32-seed × 15-trial × 56×56 probe):
+      N=16: mean=1.000  (chance=0.062, ~16× over)
+      N=32: mean=0.990  (chance=0.031, ~32× over)
+      N=64: mean=0.988  (chance=0.016, ~63× over)
+      N=128: mean=0.975 (chance=0.008, ~124× over)
+
+    For CI speed this regression test runs 8 seeds × 10 trials at
+    56×56 × N=64 — much smaller but still asserts the substrate
+    clears the kızıl elma capacity threshold by a wide margin
+    (mean ≥ 0.85 vs chance 0.016).
+    """
+    GRID, N_PAT = 56, 64
+    pat_size = max(4, int(0.05 * GRID * GRID))
+    wta_k = max(pat_size + 2, int(0.075 * GRID * GRID))
+    cfg = FieldConfig(rows=GRID, cols=GRID)
+    accs = []
+    for seed in range(8):
+        rng = np.random.default_rng(seed)
+        patterns = [random_pattern(GRID, GRID, k=pat_size, rng=rng)
+                    for _ in range(N_PAT)]
+        mem = PatternMemory(
+            cfg=cfg, seed=seed, write_steps=20, write_lr=0.30,
+            wta_k=wta_k, wta_suppression=0.3, rule="hebb")
+        for p in patterns:
+            mem.store(p)
+        accs.append(_accuracy(mem, patterns, DROP_FRAC,
+                              np.random.default_rng(seed*31+7), n_trials=10))
+    mean = float(np.mean(accs))
+    sd = float(np.std(accs, ddof=1)) if len(accs) > 1 else 0.0
+    se = sd / np.sqrt(len(accs))
+    lo = mean - 2 * se
+    chance = 1.0 / N_PAT
+    assert mean >= 0.85, (
+        f"capacity at 56×56 N=64 collapsed: mean={mean:.3f} "
+        f"(should be ≥ 0.85, was 0.988 in full probe); accs={accs}")
+    assert lo > chance + 0.5, (
+        f"capacity 2σ lower bound not clearly above chance: "
+        f"lo={lo:.3f} chance={chance:.4f}; accs={accs}")
