@@ -54,24 +54,22 @@ class SkipBank:
         self.R, self.C, self.K = rows, cols, K
         self.w_clip = w_clip
         rng = np.random.default_rng(seed)
+        # Vectorized candidate computation: precompute manhattan dist matrix once
+        rs, cs = np.indices((rows, cols))
+        rs_flat = rs.reshape(-1); cs_flat = cs.reshape(-1)
         N = rows * cols
-        src = []; dst = []
-        for r in range(rows):
-            for c in range(cols):
-                src_idx = r * cols + c
-                # candidate cells with manhattan dist >= md_min
-                cands = []
-                for r2 in range(rows):
-                    for c2 in range(cols):
-                        if abs(r2 - r) + abs(c2 - c) >= md_min:
-                            cands.append(r2 * cols + c2)
-                if len(cands) < K:
-                    continue
-                picked = rng.choice(cands, size=K, replace=False)
-                for d in picked:
-                    src.append(src_idx); dst.append(int(d))
-        self.src = np.asarray(src, dtype=np.int32)
-        self.dst = np.asarray(dst, dtype=np.int32)
+        src_list = []; dst_list = []
+        for src_idx in range(N):
+            r0, c0 = rs_flat[src_idx], cs_flat[src_idx]
+            md = np.abs(rs_flat - r0) + np.abs(cs_flat - c0)
+            cands = np.where(md >= md_min)[0]
+            if len(cands) < K:
+                continue
+            picked = rng.choice(cands, size=K, replace=False)
+            src_list.extend([src_idx] * K)
+            dst_list.extend(picked.tolist())
+        self.src = np.asarray(src_list, dtype=np.int32)
+        self.dst = np.asarray(dst_list, dtype=np.int32)
         self.w = np.zeros(len(self.src), dtype=np.float32)
 
     @property
@@ -150,11 +148,12 @@ def train_chain_hybrid(trainer, anchors, n_epochs=120, lr=0.20,
                 trainer.step_with_skip()
 
 
-def probe_link(seed, A, B, bank, K, md_min, skip_eta=0.05, hold=4, rd=8):
+def probe_link(seed, A, B, bank, K, md_min, grid=None, skip_eta=0.05, hold=4, rd=8):
     """Inject A, propagate (rd+hold) steps with skip bank active, read T at B.
     Compare to fresh field with empty bank.
     """
-    cfg = FieldConfig(rows=GRID, cols=GRID)
+    g = grid if grid is not None else GRID
+    cfg = FieldConfig(rows=g, cols=g)
     f = Field(cfg, seed=seed)
     f.inject([A], [1.0])
     for _ in range(hold + rd):
@@ -164,7 +163,7 @@ def probe_link(seed, A, B, bank, K, md_min, skip_eta=0.05, hold=4, rd=8):
     cue = float(f.T[B[0], B[1]])
 
     f0 = Field(cfg, seed=seed)
-    empty = SkipBank(GRID, GRID, K=K, md_min=md_min, seed=seed)
+    empty = SkipBank(g, g, K=K, md_min=md_min, seed=seed)
     f0.inject([A], [1.0])
     for _ in range(hold + rd):
         f0.step()
@@ -174,20 +173,25 @@ def probe_link(seed, A, B, bank, K, md_min, skip_eta=0.05, hold=4, rd=8):
     return cue - base
 
 
-def run_hybrid(n, md, lr=0.20, ep=120, K=4, md_min=3, skip_eta=0.05):
-    discrim = np.zeros((len(SEEDS), n), dtype=np.float32)
+def run_hybrid(n, md, lr=0.20, ep=120, K=4, md_min=3, skip_eta=0.05,
+               grid=None, seeds=None, bank_seed_offset=0):
+    g = grid if grid is not None else GRID
+    sds = seeds if seeds is not None else SEEDS
+    discrim = np.zeros((len(sds), n), dtype=np.float32)
     densities = []
-    for si, seed in enumerate(SEEDS):
+    for si, seed in enumerate(sds):
         rng = np.random.default_rng(seed)
-        anchors = make_chain(n, GRID, rng, md=md)
-        tr = HybridTrainer(seed=seed, K=K, md_min=md_min, skip_eta=skip_eta)
+        anchors = make_chain(n, g, rng, md=md)
+        tr = HybridTrainer(rows=g, cols=g, seed=seed + bank_seed_offset,
+                           K=K, md_min=md_min, skip_eta=skip_eta)
         densities.append(tr.bank.density())
         train_chain_hybrid(tr, anchors, n_epochs=ep, lr=lr)
         for li in range(n):
             discrim[si, li] = probe_link(seed, anchors[li], anchors[li+1],
-                                         tr.bank, K, md_min, skip_eta=skip_eta)
+                                         tr.bank, K, md_min, grid=g,
+                                         skip_eta=skip_eta)
     lm = discrim.mean(axis=0)
-    se = discrim.std(axis=0, ddof=1) / np.sqrt(len(SEEDS))
+    se = discrim.std(axis=0, ddof=1) / np.sqrt(len(sds))
     pos = int(((lm - 2 * se) > 0).sum())
     return discrim.mean(), pos, lm, float(np.mean(densities))
 
