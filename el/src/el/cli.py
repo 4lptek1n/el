@@ -338,6 +338,58 @@ def cli_world_reset(ctx: click.Context) -> None:
     click.echo(json.dumps({"ok": True, "path": str(store.path)}, ensure_ascii=False))
 
 
+@main.command("thermo-demo")
+@click.option("--epochs", default=200, show_default=True, help="Training epochs.")
+@click.option("--seed", default=0, show_default=True)
+def cli_thermo_demo(epochs: int, seed: int) -> None:
+    """Demo the thermodynamic-field experiment (XOR via local plasticity).
+
+    Runs both untrained and trained evaluations and shows the natural
+    XOR-shaped response of the state-dependent diffusion field.
+    """
+    from .thermofield import (
+        Field,
+        FieldConfig,
+        evaluate,
+        make_xor_dataset,
+        train_xor,
+    )
+
+    cfg = FieldConfig()
+    f0 = Field(cfg, seed=seed)
+    in_pos = [(1, 1), (1, 5)]
+    out_pos = [(3, 3)]
+    untrained = []
+    for inp, tgt in make_xor_dataset():
+        f0.reset_temp()
+        f0.inject(in_pos, inp)
+        f0.relax()
+        untrained.append(
+            {"input": inp, "target": tgt, "output": float(f0.read(out_pos)[0])}
+        )
+
+    trained_result = train_xor(epochs=epochs, seed=seed)
+    trained = evaluate(trained_result.field, make_xor_dataset)
+
+    click.echo(json.dumps(
+        {
+            "untrained_natural_response": untrained,
+            "after_local_plasticity_training": trained,
+            "training_accuracy": trained_result.accuracy,
+            "training_final_error": trained_result.final_error,
+            "field_stats": trained_result.field.stats(),
+            "note": (
+                "The state-dependent diffusion gives a natural XOR-shape: "
+                "(1,1) is suppressed below (0,1) and (1,0) because two hot "
+                "inputs short-circuit before reaching the output. Current "
+                "local plasticity rules do not yet reliably sharpen this."
+            ),
+        },
+        indent=2,
+        ensure_ascii=False,
+    ))
+
+
 @main.command("demo")
 @click.option("--all", "run_all", is_flag=True, help="Run the full demo suite.")
 @click.option("--name", "single", default=None, help="Run a single demo by name.")
@@ -471,7 +523,7 @@ def _run_command(ctx: click.Context, raw: str) -> None:
 for _name in (
     "run", "parse", "seed", "stats", "events", "verbs", "export-training",
     "daemon", "rate", "demo", "train", "transformer-eval",
-    "think", "world-stats", "world-reset",
+    "think", "world-stats", "world-reset", "thermo-demo",
 ):
     _SUBCOMMAND_NAMES.add(_name)
 

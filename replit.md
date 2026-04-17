@@ -102,3 +102,40 @@ el world-reset
 
 **Tests**: `python3 -m pytest tests/worldmodel/ -v` (17 tests covering
 HDC properties, world model prediction & persistence, EFE ranking).
+
+## Thermofield experiment (radical, exploratory)
+
+A 4th memory direction explored at the user's prompting: replace
+[structure + weights + time] with a **single thermodynamic field** —
+distance-weighted diffusion across a 2D grid of cells with a scalar
+temperature, learned only via local plasticity (Hebbian + 1-cell
+supervised nudge). No backprop. No global signal. Pure NumPy.
+
+**Architecture** (`el.thermofield`):
+- `field.py` — 2D grid with state-dependent conductivity (`c_eff = c·(1+α·T̄)`),
+  Dirichlet boundary clamping for inputs, energy decay
+- `plasticity.py` — Hebbian co-activation rule + supervised nudge at
+  output cells only (1-cell-deep error, not backprop)
+- `runner.py` — XOR/OR training loops
+
+**Honest finding**: the state-dependent diffusion gives the field a
+**naturally XOR-shaped response without any training** — `(1,1)` is
+suppressed below `(0,1)` and `(1,0)` because two hot inputs short-circuit
+each other before reaching the output. Current local plasticity rules
+execute correctly and keep the field stable, but **do not yet reliably
+sharpen this response**: training with a fixed 0.5 threshold collapses
+to ~50% accuracy because the four XOR examples fight over the same
+shared conductivity paths.
+
+This is a real research finding, not a finished win. The substrate is
+working; smarter plasticity (e.g., trainable readout on a fixed reservoir,
+or anti-Hebbian competition) is the next direction.
+
+**Demo**:
+```bash
+el thermo-demo --epochs 200
+```
+Outputs untrained natural response, post-training response, and field stats.
+
+**Tests**: `python3 -m pytest tests/thermofield/ -v` (14 tests covering
+field substrate, plasticity rules, natural XOR shape, training stability).
