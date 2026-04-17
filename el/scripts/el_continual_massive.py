@@ -17,7 +17,7 @@ def main():
     print(f"[corpus] {len(text):,} chars")
 
     win, cue_len, grid = 120, 80, 256
-    total, probe_every, probe_n = 10000, 1000, 100
+    total, probe_every, probe_n = 5000, 500, 100
     print(f"[setup] grid={grid}x{grid}={grid*grid} cells, "
           f"stream={total}, probe every {probe_every}, n_eval={probe_n}")
 
