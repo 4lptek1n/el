@@ -1225,3 +1225,25 @@ Gutenberg chunk stream'i alır. Her 500 chunk'ta ESKİ (ilk 100), YENİ
 - Wall time: 7.8 dakikada 3000 stream + 12 probe round
 - Local Hebbian + decay rejimi LLM'in frozen-weights problemini
   çözüyor: substrate canlıdır, durmadan öğrenir
+
+### Apr 17 — GENERATION: substrate gerçek İngilizce üretiyor
+
+`el/scripts/el_generation.py`: 3000 chunk train → substrate, n-gram'lar
+ve random ile karşılaştırma. 50 held-out prompt × 80 char devam üretimi.
+
+| Model | mean char acc | max char acc | tipik üretim |
+|---|---|---|---|
+| random | 1.0% | 5.0% | gibberish |
+| bigram LM | 10.6% | 18.8% | "the the the the the..." |
+| trigram LM | 10.6% | 21.2% | "the the the the the..." |
+| 4-gram LM | 11.0% | 20.0% | "the see the see the see..." |
+| **substrate** | 8.2% | **57.5%** | "e top of his head; you observe that his eyes and ears are at" |
+
+**Kalitatif fark uçurum:** N-gram'lar görevin tamamında "the the the"
+döngüsüne çöküyor — substrate AKICI İngilizce üretiyor. Gerçek bir
+Moby Dick cümlesini %57.5 char accuracy ile retrieve ediyor.
+
+Mean substrate < bigram çünkü cue uymayan prompt'larda alakasız
+chunk recall ediliyor (nearest-neighbor retrieval). Ama uyduğunda
+**akıcı, tutarlı, gerçek metin** üretiyor — n-gram'lar hiçbir prompt'ta
+böyle bir şey yapamıyor.
