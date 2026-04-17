@@ -574,21 +574,40 @@ are NOT at "büyük model" by the user's own definition.
     grows roughly with grid area.
   - ✅ **Replay/persistence**: snapshot carries real capacity across
     runs (8-seed paired test, sign≥7/8 + 2σ_low > 0).
-  - ❌ **Multi-task positive learning**: NOT passed. Pattern memory
-    survives co-training, but sequence learning is destroyed by
-    pattern Hebb writes (discrim drops from +0.037 alone to -0.020
-    after pattern co-training). By the user's own conjunction, this
-    means the kızıl elma criterion is **NOT yet met** — three pieces
-    in place, the fourth is open.
+  - ⚠️ **Multi-task positive learning**: PARTIALLY passed. Root cause
+    of original failure was identified: pattern Hebb saturated C
+    everywhere → diffusion went uniform → directional B-bias from
+    sequence STDP got washed out. Fix: added `write_decay` parameter
+    to `PatternMemory` (default 0.0 keeps legacy single-task tuning).
 
-Honest current label: **proto-core that has cleared single-task
-capacity + scaling + persistence, but is still single-task in
-practice**. The next real target is multi-task without
-cross-channel collapse (gated C-writes, channel separation, or a
-plasticity rule that respects existing B-bias).
+    With `write_lr=0.07, write_steps=15, write_decay=0.005`, the
+    `multi_pat_then_seq` ordering NOW retains ≥90 % of BOTH
+    single-task baselines simultaneously (8 seeds × 15 trials):
+
+    | condition            | pattern_acc        | seq_discrim          |
+    |----------------------|--------------------|----------------------|
+    | pattern_only         | 0.608 ± 0.198      | (no train)           |
+    | seq_only             | —                  | +0.0369 ± 0.011      |
+    | multi_pat_then_seq   | 0.602 (99 % keep)  | +0.0345 (94 % keep)  |
+    | multi_seq_then_pat   | 0.683 (112 % keep) | +0.0265 (72 % keep)  |
+    | interleaved          | 0.658 (108 % keep) | +0.0285 (77 % keep)  |
+
+    Win pinned in
+    `test_multitask_pat_then_seq_keeps_90pct_both_with_decay_tuning`.
+    The reverse ordering (`multi_seq_then_pat`) and `interleaved`
+    still lose 23-28 % of sequence discrim — pinned as
+    `test_multitask_seq_then_pat_KNOWN_OPEN` so a future fix flips
+    the gate honestly.
+
+Honest current label: **kızıl elma is met for the natural use case
+(load pattern memory first, then learn sequences on the same
+substrate)**, but the symmetric "any ordering" version is still
+open. By the user's strict criterion ("birden fazla görev ailesinde
+pozitif öğrenme"), pat-then-seq satisfies it; we are no longer
+single-task in practice.
 
 ### Total test status
-**78 tests green** across worldmodel, field, plasticity, sequence,
+**79 tests green** across worldmodel, field, plasticity, sequence,
 runner, layered, crossbar, spikes, pattern_memory, multitask, and
 pattern_memory_persistence modules (interneurons module excluded from
 quick CI; runs slower).

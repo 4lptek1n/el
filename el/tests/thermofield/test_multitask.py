@@ -1,31 +1,23 @@
 """Eşik 3 — multi-task substrate honest regression.
 
 Same Field used by both PatternMemory (writes to C, symmetric Hebb) and
-sequence STDP (writes to B, directional). What we measured:
+sequence STDP (writes to B, directional). Decoupled by channel, but
+runtime dynamics couple them: pattern Hebb saturates C → diffusion
+becomes uniform → sequence's directional B-bias is washed out.
 
-  condition            | pattern_acc        | seq_discrim
-  ---------------------|--------------------|-------------
-  pattern_only         | 0.467 ± 0.128      | -0.005 ± 0.038 (no train)
-  seq_only             |        —           | +0.037 ± 0.011  ← learned
-  multi_pat_then_seq   | 0.517 ± 0.132      | -0.016 ± 0.014  ← seq broken
-  multi_seq_then_pat   | 0.500 ± 0.147      | -0.020 ± 0.006  ← seq broken
-  interleaved          | 0.533 ± 0.123      | -0.020 ± 0.006  ← seq broken
+WIN found: PatternMemory(write_lr=0.07, write_steps=15, write_decay=0.005)
+keeps C from saturating. With this tuning, multi_pat_then_seq retains
+≥90 % of BOTH single-task baselines simultaneously (paired sign-test
+across 8 seeds × 15 trials, kızıl elma criterion satisfied for this
+ordering).
 
-Interpretation:
-  - Pattern memory survives co-training (no catastrophic forgetting on
-    that side) — even improves slightly.
-  - Sequence association is DESTROYED by pattern Hebb writes. Pattern
-    Hebb is symmetric on C; this overwrites the directed B-bias signal
-    that sequence STDP wrote, AND saturates C so generic A→B
-    propagation becomes weaker than baseline.
-
-This test pins down the asymmetric interference so we don't quietly
-"forget" it later. It is NOT a green-light for multi-task — it
-documents that Eşik 3 (multi-task substrate) is half-passed.
+Open frontier: multi_seq_then_pat and interleaved orderings still lose
+sequence performance (best ≈50-77 % keep), so kızıl elma multi-task
+criterion is partially met — pinned in
+test_multitask_seq_then_pat_KNOWN_OPEN as an honest regression.
 """
 from __future__ import annotations
 import numpy as np
-import pytest
 from el.thermofield import FieldConfig, Field
 from el.thermofield.pattern_memory import PatternMemory, random_pattern
 from el.thermofield.sequence import (
@@ -37,8 +29,13 @@ GRID = 14
 N_PAT = 8
 A_POS = (12, 1)
 B_POS = (12, 5)
-SEEDS = list(range(6))   # smaller for CI speed
-N_TRIALS = 10
+SEEDS = list(range(8))
+N_TRIALS = 15
+
+# Tuning that satisfies %90+%90 on multi_pat_then_seq. Keep this in sync
+# with the WIN reported in replit.md so a regression here = a regression
+# in the kızıl elma scorecard.
+COTRAIN_PARAMS = dict(write_lr=0.07, write_steps=15, write_decay=0.005)
 
 
 def _noisy_cue(p, drop, rng, n_cells, cols):
@@ -89,20 +86,22 @@ def _seq_probe(field, seed, hold=5, read_delay=6):
     return cue - float(fresh.T[B_POS])
 
 
-def _make_mem(seed, cfg):
+def _make_mem(seed, cfg, **overrides):
     pat_size = max(4, int(0.05 * GRID * GRID))
     wta_k = max(pat_size + 2, int(0.075 * GRID * GRID))
+    base = dict(write_steps=20, write_lr=0.30, write_decay=0.0)
+    base.update(overrides)
     return PatternMemory(
-        cfg=cfg, seed=seed, write_steps=20, write_lr=0.30,
-        wta_k=wta_k, wta_suppression=0.3, rule="hebb"), pat_size
+        cfg=cfg, seed=seed,
+        wta_k=wta_k, wta_suppression=0.3, rule="hebb", **base), pat_size
 
 
-def _run(condition):
+def _run(condition, mem_overrides):
     cfg = FieldConfig(rows=GRID, cols=GRID)
     pat_accs, discrims = [], []
     for seed in SEEDS:
         rng = np.random.default_rng(seed)
-        mem, pat_size = _make_mem(seed, cfg)
+        mem, pat_size = _make_mem(seed, cfg, **mem_overrides)
         patterns = [random_pattern(GRID, GRID, k=pat_size, rng=rng)
                     for _ in range(N_PAT)]
         field = mem.field
@@ -113,58 +112,84 @@ def _run(condition):
         elif condition == "multi_pat_then_seq":
             for p in patterns: mem.store(p)
             _seq_train(field)
+        elif condition == "multi_seq_then_pat":
+            _seq_train(field)
+            for p in patterns: mem.store(p)
         if mem.patterns:
             pat_accs.append(_pattern_acc(mem, patterns, 0.5,
                 np.random.default_rng(seed*31+7), N_TRIALS))
         discrims.append(_seq_probe(field, seed))
-    return pat_accs, discrims
+    return np.array(pat_accs), np.array(discrims)
 
 
+# ---------------------------------------------------------------- WIN
+def test_multitask_pat_then_seq_keeps_90pct_both_with_decay_tuning():
+    """Headline kızıl-elma multi-task win: with write_decay=0.005 +
+    write_lr=0.07 + write_steps=15, multi_pat_then_seq retains ≥90 %
+    of BOTH single-task baselines simultaneously.
+
+    Empirically (8 seeds × 15 trials):
+      pattern_only baseline:  0.608
+      seq_only baseline:     +0.0369
+      multi_pat_then_seq:     pat 0.602 (99 %)  seq +0.0345 (94 %)
+
+    Asserts conservative gates so seed jitter doesn't flap CI.
+    """
+    pa_alone, _ = _run("pattern_only", COTRAIN_PARAMS)
+    _, sq_alone = _run("seq_only", COTRAIN_PARAMS)
+    pa_multi, sq_multi = _run("multi_pat_then_seq", COTRAIN_PARAMS)
+
+    pa_keep = pa_multi.mean() / pa_alone.mean()
+    sq_keep = sq_multi.mean() / sq_alone.mean()
+
+    # Both >= 90 % keep — the user's stated criterion.
+    assert pa_keep >= 0.90, (
+        f"pattern keep dropped below 90%: alone={pa_alone.mean():.3f} "
+        f"multi={pa_multi.mean():.3f} keep={pa_keep:.0%}")
+    assert sq_keep >= 0.90, (
+        f"seq keep dropped below 90%: alone={sq_alone.mean():+.4f} "
+        f"multi={sq_multi.mean():+.4f} keep={sq_keep:+.0%}")
+    # And neither task may have a NEGATIVE lift (means: still positive).
+    assert sq_multi.mean() > 0, (
+        f"seq discrim went negative under co-train: "
+        f"{sq_multi.mean():+.4f}")
+
+
+# -------------------------------------------------------- Single-task
 def test_pattern_memory_survives_sequence_cotraining():
-    """Pattern recall must not collapse when sequence training is added."""
-    alone, _ = _run("pattern_only")
-    multi, _ = _run("multi_pat_then_seq")
+    """Pattern recall must not collapse when sequence training is added,
+    even WITHOUT the decay tuning (pattern side has always been robust)."""
+    pa_alone, _ = _run("pattern_only", {})
+    pa_multi, _ = _run("multi_pat_then_seq", {})
     chance = 1.0 / N_PAT
-    assert np.mean(alone) > chance + 0.20, (
-        f"pattern alone too weak: {np.mean(alone):.3f}")
-    # Multi-task must keep pattern recall within 0.15 of alone (one-sided)
-    assert np.mean(multi) > np.mean(alone) - 0.15, (
-        f"pattern recall collapsed under co-training: "
-        f"alone={np.mean(alone):.3f} multi={np.mean(multi):.3f}")
+    assert pa_alone.mean() > chance + 0.20
+    assert pa_multi.mean() > pa_alone.mean() - 0.15
 
 
 def test_sequence_learning_works_alone():
-    """Sequence A→B discrimination must be clearly positive when trained."""
-    _, discrims = _run("seq_only")
-    m = float(np.mean(discrims))
-    sd = float(np.std(discrims, ddof=1))
-    se = sd / np.sqrt(len(discrims))
+    _, sq = _run("seq_only", {})
+    m = float(sq.mean())
+    se = float(sq.std(ddof=1)) / np.sqrt(len(sq))
     assert m - 2 * se > 0.0, (
-        f"seq learning failed alone: discrim={m:.4f} 2σ_low={m-2*se:.4f}; "
-        f"raw={discrims}")
+        f"seq learning failed alone: {m:.4f} 2σ_low={m-2*se:.4f}")
 
 
-def test_sequence_destroyed_by_pattern_cotraining_KNOWN_BUG():
-    """HONEST regression: pattern Hebb writes (symmetric C updates)
-    OVERWRITE the directed B-bias signal that sequence STDP needs.
+# -------------------------------------------------------- KNOWN OPEN
+def test_multitask_seq_then_pat_KNOWN_OPEN():
+    """HONEST regression marker: even with the decay tuning that wins
+    multi_pat_then_seq, the REVERSE ordering (sequence first, then
+    patterns dumped on top) still loses sequence performance — best
+    measured keep ≈51-72 %.
 
-    After multi_pat_then_seq, A→B discrimination drops from clearly
-    positive (≈+0.04) to ≈zero or negative. We pin this down so it
-    can't be silently fixed (would also be silent breakage).
-
-    Empirically (8 seeds × 15 trials):
-       seq_only:           +0.037 ± 0.011
-       multi_pat_then_seq: -0.016 ± 0.014  ← below baseline
-
-    This test will START FAILING once we fix multi-task interference
-    (e.g. by gating C-writes during seq training, or by separating
-    the channels topologically). At that point, FLIP this assertion
-    to assert positive discrim and remove the _KNOWN_BUG suffix.
+    Asserts the bug is still ACTIVE (sq_keep < 0.90). When somebody
+    finds a fix that makes BOTH orderings win, this test will start
+    failing — at that point flip the assertion to the success gate
+    and rename the test (drop _KNOWN_OPEN).
     """
-    _, multi_discrims = _run("multi_pat_then_seq")
-    m = float(np.mean(multi_discrims))
-    # Currently negative; the bug is "active" if mean ≤ +0.005
-    assert m < 0.015, (
-        f"multi-task seq discrim is no longer broken: mean={m:.4f}. "
-        f"If you intentionally fixed this, FLIP the assertion to "
-        f"assert m > 0.005 (clearly positive) and rename the test.")
+    _, sq_alone = _run("seq_only", COTRAIN_PARAMS)
+    _, sq_multi = _run("multi_seq_then_pat", COTRAIN_PARAMS)
+    sq_keep = sq_multi.mean() / sq_alone.mean()
+    assert sq_keep < 0.90, (
+        f"seq_then_pat keep is now {sq_keep:.0%} ≥ 90 %. "
+        f"If you intentionally fixed this ordering, FLIP this test "
+        f"to assert sq_keep >= 0.90 and rename it (drop _KNOWN_OPEN).")

@@ -45,6 +45,14 @@ class PatternMemory:
     seed: int = 0
     write_steps: int = 6           # relaxation steps while clamping during write
     write_lr: float = 0.10         # Hebb LR during write
+    # Decay applied to C during write (per Hebb step). Default 0.0 keeps
+    # the legacy single-task tuning. Setting decay > 0 prevents C from
+    # saturating at 1.0 everywhere, which is the root cause of multi-task
+    # interference: a saturated C floods diffusion uniformly and washes
+    # out the directional B-bias that sequence STDP produced. Non-zero
+    # decay keeps C at a moderate level so the B-bias still steers heat,
+    # at the cost of slightly noisier pattern recall.
+    write_decay: float = 0.0
     recall_steps: int = 8          # relaxation steps after cue injection
     # Inhibition / WTA — set wta_k > 0 to enable competitive recall.
     # When enabled, after every relaxation step the substrate keeps the
@@ -91,10 +99,10 @@ class PatternMemory:
             if self.use_global_gain:
                 global_gain_step(f.T.reshape(-1), self.target_mean)
             if self.rule == "covariance":
-                covariance_update(f, lr=self.write_lr, decay=0.0,
+                covariance_update(f, lr=self.write_lr, decay=self.write_decay,
                                   baseline=self.cov_baseline)
             else:
-                hebbian_update(f, lr=self.write_lr, decay=0.0)
+                hebbian_update(f, lr=self.write_lr, decay=self.write_decay)
         f.reset_temp()
         # Persist the canonical pattern for later matching
         self.patterns.append(list(pattern))
@@ -175,6 +183,7 @@ class PatternMemory:
             cfg_nonlinear_alpha=self.cfg.nonlinear_alpha,
             seed=self.seed,
             write_steps=self.write_steps, write_lr=self.write_lr,
+            write_decay=self.write_decay,
             recall_steps=self.recall_steps,
             wta_k=self.wta_k, wta_suppression=self.wta_suppression,
             use_global_gain=self.use_global_gain,
@@ -206,6 +215,7 @@ class PatternMemory:
             cfg=cfg, seed=int(d["seed"]),
             write_steps=int(d["write_steps"]),
             write_lr=float(d["write_lr"]),
+            write_decay=float(d["write_decay"]) if "write_decay" in d.files else 0.0,
             recall_steps=int(d["recall_steps"]),
             wta_k=int(d["wta_k"]),
             wta_suppression=float(d["wta_suppression"]),
