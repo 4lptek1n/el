@@ -28,6 +28,39 @@ def hebbian_update(field: Field, lr: float = 0.01, decay: float = 0.001) -> None
     np.clip(field.C_down, 0.05, 1.0, out=field.C_down)
 
 
+def covariance_update(
+    field: Field,
+    lr: float = 0.01,
+    decay: float = 0.001,
+    baseline: float | None = None,
+) -> None:
+    """Hebb + anti-Hebb in a single covariance rule (BCM-flavoured).
+
+        Δw = lr · (T_a − μ) · (T_b − μ) − decay · w
+
+    where μ is either a fixed `baseline` or the per-step mean of T.
+    Both endpoints above μ → strengthen (Hebbian).
+    One above, one below → weaken (anti-Hebbian, decorrelating).
+    Both below → tiny strengthening of "cold-together" edges
+    (mathematically the rule allows it; in practice T≥0 keeps the
+    magnitude small).
+
+    This is the principled fix for pattern-memory smear: pure Hebb
+    saturates every edge that the diffusion ever touches, while the
+    covariance rule actively *separates* coactive from non-coactive
+    pairs. Combine with k-WTA on T for sparse-coding regime.
+    """
+    T = field.T
+    mu = float(T.mean()) if baseline is None else float(baseline)
+    dev = T - mu
+    cov_h = dev[:, :-1] * dev[:, 1:]
+    cov_v = dev[:-1, :] * dev[1:, :]
+    field.C_right += lr * cov_h - decay * field.C_right
+    field.C_down += lr * cov_v - decay * field.C_down
+    np.clip(field.C_right, 0.05, 1.0, out=field.C_right)
+    np.clip(field.C_down, 0.05, 1.0, out=field.C_down)
+
+
 def gated_hebbian_update(
     field: Field,
     output_positions,

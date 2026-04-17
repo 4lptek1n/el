@@ -392,11 +392,79 @@ Plus auxiliary unit tests for `kwta_step` exact-k tie semantics and
 Honest framing: the substrate does not yet act as a strong attractor
 network on raw recall, but adding inhibition causally rescues
 training from being net-harmful, and the rescue is large and
-unambiguous in every paired seed. Next obvious moves to grow the
-absolute lift: anti-Hebb on non-coactive cells, longer write
-protocol with periodic homeostatic decay, sparser random initial C.
+unambiguous in every paired seed.
+
+### Covariance rule (Hebb + anti-Hebb) — `covariance_update`
+Principled plasticity primitive that, unlike pure Hebb, can also weaken:
+
+  Δw = lr · (T_a − μ) · (T_b − μ) − decay · w   with μ = mean(T)
+
+Both endpoints above μ → strengthen (Hebbian). One above and one below
+→ weaken (anti-Hebbian / decorrelating). Selectable on PatternMemory
+via `rule="covariance"`.
+
+**Honest empirical scope (32-seed paired probe vs plain Hebb)**:
+  - hebb mean lift:       +0.046
+  - cov mean lift:        +0.041
+  - paired delta:         **−0.005** (cov is *not* better)
+  - sign test p ≈ 0.85, 95 % bootstrap CI [−0.045, +0.030]
+
+So we explicitly do **not** claim covariance > Hebb on this benchmark.
+The earlier 12-seed result (+0.021 paired) was small-sample noise — an
+architect-flagged near-miss. Test
+`test_covariance_rule_runs_and_is_non_harmful` only asserts the rule
+remains non-harmful (positive mean, ≥ 7 / 12 non-negative) so silent
+breakage of the rule itself is caught. Plus two unit tests prove the
+math (strengthens above-mean pairs, weakens above-vs-below-mean pairs,
+clips into [0.05, 1.0] under extreme LR).
+
+Why no improvement here: under k-WTA, the substrate already operates
+on a sparse, mostly-zero T field, so μ ≈ small constant and most pairs
+fall in the "both below" or "both above" branches — the weakening
+branch fires rarely. The covariance rule may yet shine on dense /
+distributed patterns or with WTA off; left as an open hypothesis.
+
+### Multi-pattern capacity curve — CI-gated
+First quantitative capacity probe of the substrate (covariance rule,
+WTA on, hard noisy cues, 14 × 14 grid, 10-cell patterns), 8
+pre-registered seeds × 30 trials per N. The test asserts the **2 σ
+lower bound** of the mean accuracy is clearly above chance — a real
+inferential gate, not a near-noise threshold.
+
+  - N = 2 patterns: mean ≈ 0.70, gated > 0.60 (chance 0.50)
+  - N = 4 patterns: mean ≈ 0.45, gated > 0.35 (chance 0.25)
+  - N = 6 patterns: mean ≈ 0.30, gated > 0.24 (chance 0.167)
+
+Encoded in `test_capacity_curve_substrate_clearly_above_chance` —
+both a regression guard and a baseline for future capacity-improving
+work to be measured against.
+
+### Crossbar scale fix — dynamic-array buffers + invariant setters
+`SparseCrossbar` previously used `np.append` in `add_edge`, which is
+O(n) per call and made repeated edge insertion catastrophic at scale.
+Refactored to a standard dynamic-array layout (`_n` used count,
+`_cap` buffer capacity, doubling on grow), exposing `src / dst / C / B`
+as properties that view the active prefix. New `add_edges(...)` does
+vectorised bulk inserts.
+
+**Architect-flagged setter-coherence bug** (now fixed): setting `src`
+then `dst` with different lengths previously left the four edge arrays
+out-of-sync and crashed `step()`. The setters are now coherent —
+length-changing assignments to `src` or `dst` resize all four buffers,
+length-mismatched assignments to `C` or `B` raise ValueError, and a
+new `replace_edges(src, dst, C, B)` provides an atomic
+length-changing path with strict length-matching.
+
+New tests (4): 5000 sequential `add_edge` in < 1 s, bulk equivalence,
+post-grow `step()` correctness, the setter-coherence fix, and the
+strict-length C / B / replace_edges error paths.
+
+Next obvious moves: sparser random initial C, longer write protocol
+with periodic homeostatic decay, proper interneuron pools, capacity
+probe with WTA-off (where covariance might actually win), end-to-end
+Darwin-3 spike-protocol pipeline.
 
 ### Total test status
-60 tests green across worldmodel, field, plasticity, sequence, runner,
+71 tests green across worldmodel, field, plasticity, sequence, runner,
 layered, crossbar, spikes, and pattern_memory modules
 (interneurons module excluded from quick CI; runs slower).

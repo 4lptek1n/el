@@ -33,7 +33,7 @@ import numpy as np
 
 from .field import Field, FieldConfig
 from .inhibition import global_gain_step, kwta_step
-from .plasticity import hebbian_update
+from .plasticity import covariance_update, hebbian_update
 
 
 Pattern = list[tuple[int, int]]  # list of (row, col) active cells
@@ -53,6 +53,12 @@ class PatternMemory:
     wta_suppression: float = 0.5
     use_global_gain: bool = False
     target_mean: float = 0.05
+    # Plasticity rule: "hebb" (default, positive-only) or "covariance"
+    # (Hebb + anti-Hebb in one principled rule that decorrelates
+    # non-coactive cells — should reduce the smear that plain Hebb
+    # produces on a positive-only substrate).
+    rule: str = "hebb"
+    cov_baseline: float | None = None   # if None, per-step mean(T)
     field: Field | None = None
     patterns: list[Pattern] = dc_field(default_factory=list)
 
@@ -84,7 +90,11 @@ class PatternMemory:
                 kwta_step(T_flat, self.wta_k, self.wta_suppression)
             if self.use_global_gain:
                 global_gain_step(f.T.reshape(-1), self.target_mean)
-            hebbian_update(f, lr=self.write_lr, decay=0.0)
+            if self.rule == "covariance":
+                covariance_update(f, lr=self.write_lr, decay=0.0,
+                                  baseline=self.cov_baseline)
+            else:
+                hebbian_update(f, lr=self.write_lr, decay=0.0)
         f.reset_temp()
         # Persist the canonical pattern for later matching
         self.patterns.append(list(pattern))
