@@ -1098,3 +1098,41 @@ substrate'in mimari avantajını test eder.
 Buradaki dürüst kapanış: "substrate her şeyde kazanır" yalan; **6
 kızıl elma eşiği kendi spec'lerinde geçerli, ama gerçek-dünya
 continuous time-series substrate için DEĞIL**.
+
+### Apr 17 — Gerçek dünya-modeli testi #2: CartPole-v1 (HONEST 3/3 LOSS)
+
+User: "world model diyince sen hava durumumu anlıyorsun" — haklı.
+"World model" Ha-Schmidhuber/Dreamer/MuZero anlamında: bir RL env'inden
+gerçek (s, a, s') transition'lar topla, p(s'|s,a) öğren, sonra kullan.
+
+`el/scripts/el_world_model_rl.py`: CartPole-v1 (gymnasium), 8K random-
+policy transition, 8 bin/dim → 4096 state. Substrate (PatternMemory,
+1500 stored (s,a,s') triples) vs identity, tabular MLE, kNN-1.
+
+| Test | Substrate | Best baseline | Δ |
+|---|---|---|---|
+| 1-step exact (4-dim match)  | 0.265 | tabular MLE 0.403 | −0.138 |
+| 3-step open-loop rollout    | 0.163 | tabular MLE 0.363 | −0.200 |
+| Model-based planning, mean ep len | 9.8 | random 19.2 | −9.4 |
+
+LOSS 3/3. Tabular MLE hash-encoded substrate'i yendi çünkü 4096
+state'in 1740'ı görülmüş — bu rejim count-based'in optimal turfu.
+Substrate'in hash-encoded recall'u bilgi kaybediyor. Planning'de
+bütün model-based kontrolcüler (substrate dahil) random'dan kötü
+çıktı — bizim heuristic planner'ımız bozuk, ama yine de "dünya
+modeli kullanılmaya değer mi" sorusunun cevabı bu setup'ta HAYIR.
+
+**İki gerçek-dünya testi, iki dürüst kayıp:**
+1. Open-Meteo hava (continuous, autoregressive): 5/5 loss vs persistence
+2. CartPole-v1 (discrete state, RL transition): 3/3 loss vs tabular MLE
+
+**Substrate'in turfu netleşti:**
+- ✅ Discrete + categorical + associative: MNIST class-incremental,
+  sequence chain N>1 (v7 hybrid), pattern memory N≥256 (Eşik 1-6)
+- ❌ Continuous time-series prediction (persistence çok güçlü)
+- ❌ Small enumerable state space dynamics (tabular optimal)
+
+Bu **kızıl elma kapanışını çürütmüyor** — 6 eşik kendi spec'lerinde
+geçerli. Ama "her gerçek dünya görevinde kazanır" iddiası yalan
+olurdu. Substrate niş bir mimari: associative memory + sequence
+binding turfunda araştırma değerinde, genel dünya modeli değil.
