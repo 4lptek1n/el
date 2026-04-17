@@ -264,4 +264,41 @@ honest "the system learned a temporal pattern" demo.
 Pipeline files: `el/src/el/thermofield/sequence.py` (EligibilityTrace,
 stdp_hebbian_update, train_predict_next), `el/src/el/thermofield/field.py`
 (directional B channels in step()).
-Tests: `el/tests/thermofield/test_sequence.py` (5 tests, all green).
+Tests: `el/tests/thermofield/test_sequence.py` (6 tests, all green).
+
+### 3D layered substrate (LayeredField)
+Stack of N 2D Fields with vertical edges (`C_v + B_v`) AND explicit
+**coincidence gating** between layers — exactly the cortical-column
+motif and the 3D RRAM crossbar topology.
+
+How a step works:
+1. Each layer takes its own intra-layer diffusion step (existing C+B
+   directional dynamics).
+2. Vertical diffusion between adjacent layers using `C_v + B_v` (same
+   forward/backward conductance scheme as horizontal edges).
+3. **If-then collision**: cells crossing a firing threshold θ from
+   below (rising edge) inject a fixed spike packet into the cell
+   directly above. This is what makes the system *non-linear* —
+   two simultaneous L0 inputs whose diffusion overlaps at one L1 cell
+   will both push it through θ → super-linear L1 response.
+
+Validated empirically (3 tests in `test_layered.py`, all green):
+- Vertical flow alone propagates input from L0 to L1 (~0.10–0.15
+  amplitude after 5 steps).
+- Coincidence at the overlap cell amplifies **~3.3×** vs the larger
+  single input alone (sub-threshold individually, super-threshold
+  together).
+- 3-layer stack: 4 clustered L0 inputs propagate up to L2 with
+  detectable amplification vs a single input.
+
+Why this matters for the "scale to neuromorphic chip" question:
+- It is structurally what TrueNorth, Loihi 2, Tianjic, and Darwin-3
+  do at the silicon level (multi-core 2D arrays + vertical/lateral
+  routing + spike-gated propagation).
+- Each `C_v[l, r, c]` value is a one-to-one analog of an analog RRAM
+  conductance.
+- The spike threshold + amplitude are the binarization step needed to
+  port the substrate to a real spiking-neuromorphic chip later.
+
+Files: `el/src/el/thermofield/layered.py`, tests in
+`el/tests/thermofield/test_layered.py` (3 tests).
