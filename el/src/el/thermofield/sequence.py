@@ -22,7 +22,7 @@ from dataclasses import dataclass
 import numpy as np
 
 from .field import Field, FieldConfig
-from .plasticity import supervised_nudge
+from .plasticity import hebbian_update, supervised_nudge
 
 
 class EligibilityTrace:
@@ -43,38 +43,43 @@ def stdp_hebbian_update(
     field: Field,
     trace: EligibilityTrace,
     *,
-    lr: float = 0.01,
+    lr: float = 0.07,
     decay: float = 0.001,
+    bias_clip: float = 0.6,
 ) -> None:
-    """Trace-gated Hebbian: strengthen edges where pre-cell trace × post-cell
-    current is high.
+    """Anti-symmetric STDP on the directional bias channel B.
 
-    LIMITATION (important): conductivity in this model is a single scalar
-    per edge — it represents flow in BOTH directions. We therefore sum
-    the forward and backward credit terms, which makes this rule a
-    *coactivity-with-temporal-window* rule, not a directional STDP. After
-    training on A→B the edge A↔B is strengthened, but at inference time
-    presenting A activates B and presenting B activates A roughly
-    equally. True directional learning requires directed edges (separate
-    C_AB and C_BA) — this is a planned refactor, not yet implemented.
+    Update rule (per edge):
+        ΔB = lr · (E_pre · T_post  −  E_post · T_pre)  −  decay · B
 
-    The trace decay (~0.8) sets the temporal pairing window; events
-    farther apart in time get less credit. The rule does learn that
-    two events are temporally associated (above a no-pairing baseline),
-    just not which one came first.
+    For the right-edge between cells (i,j) and (i,j+1):
+        forward = E[i,j] · T[i,j+1]   (left led right)
+        backward = E[i,j+1] · T[i,j]  (right led left)
+        ΔB_right[i,j] = lr · (forward − backward) − decay · B_right[i,j]
+
+    Positive B favors left→right flow at runtime, negative B favors
+    right→left. Decay pulls B back toward 0 when there is no consistent
+    temporal lead. The symmetric C channel is NOT touched by this rule —
+    that channel is reserved for the standard Hebbian co-activation
+    rules in `plasticity.py`. The two channels can therefore be applied
+    independently in the same training loop.
+
+    `bias_clip` keeps |B| < bias_clip so that the effective forward and
+    backward conductances stay within the valid (0.05, 1.0) range when
+    combined with the typical C ≈ 0.3–0.7 range.
     """
     E = trace.E
     T = field.T
 
-    co_h_fwd = E[:, :-1] * T[:, 1:]
-    co_h_bwd = E[:, 1:] * T[:, :-1]
-    co_v_fwd = E[:-1, :] * T[1:, :]
-    co_v_bwd = E[1:, :] * T[:-1, :]
+    fwd_h = E[:, :-1] * T[:, 1:]   # left led right
+    bwd_h = E[:, 1:] * T[:, :-1]   # right led left
+    fwd_v = E[:-1, :] * T[1:, :]   # up led down
+    bwd_v = E[1:, :] * T[:-1, :]   # down led up
 
-    field.C_right += lr * (co_h_fwd + co_h_bwd) - decay * field.C_right
-    field.C_down += lr * (co_v_fwd + co_v_bwd) - decay * field.C_down
-    np.clip(field.C_right, 0.05, 1.0, out=field.C_right)
-    np.clip(field.C_down, 0.05, 1.0, out=field.C_down)
+    field.B_right += lr * (fwd_h - bwd_h) - decay * field.B_right
+    field.B_down += lr * (fwd_v - bwd_v) - decay * field.B_down
+    np.clip(field.B_right, -bias_clip, bias_clip, out=field.B_right)
+    np.clip(field.B_down, -bias_clip, bias_clip, out=field.B_down)
 
 
 def _release_clamps(field: Field) -> None:
@@ -146,7 +151,7 @@ def train_predict_next(
     hold: int = 5,
     gap: int = 2,
     trace_decay: float = 0.80,
-    stdp_lr: float = 0.01,
+    stdp_lr: float = 0.07,
     read_delay: int = 6,
 ) -> PredictNextResult:
     """Learn that two events A and B are *temporally associated* (no
@@ -196,8 +201,22 @@ def train_predict_next(
         trace.reset()
         present_event(field, trace, [A], [1.0], hold=hold)
         relax_with_trace(field, trace, gap)
-        present_event(field, trace, [B], [1.0], hold=hold)
+        # EVENT-BOUNDARY STDP: at the moment B is first presented, E[A] is
+        # high (recently fired, decaying) but E[B] is still ~0. This is
+        # the clean "A leads B" snapshot. Setting B's temperature directly
+        # before any step and applying STDP once captures the directional
+        # signal cleanly. If we let B's clamp run for several steps before
+        # STDP, E[B] grows huge and dominates the rule symmetrically.
+        _release_clamps(field)
+        field.inject([B], [1.0])
         stdp_hebbian_update(field, trace, lr=stdp_lr)
+        # Now actually run B's hold so the symmetric Hebbian sees the
+        # full coactivity state (heat propagating between A's residual and
+        # B's clamp).
+        for _ in range(hold):
+            field.step()
+            trace.update(field.T)
+        hebbian_update(field, lr=stdp_lr, decay=0.001)
 
     def probe(cue_pos) -> float:
         field.reset_temp()

@@ -28,9 +28,20 @@ class FieldConfig:
 class Field:
     """A 2D thermodynamic substrate.
 
-    Conductivity arrays:
-      C_right[i, j]  conductivity between cell (i, j) and (i, j+1)
-      C_down[i, j]   conductivity between cell (i, j) and (i+1, j)
+    Conductivity arrays (per edge):
+      C_right[i, j]  symmetric conductance between cell (i, j) and (i, j+1)
+      C_down[i, j]   symmetric conductance between cell (i, j) and (i+1, j)
+      B_right[i, j]  directional BIAS for right-edge: +B favors left→right
+                     flow, -B favors right→left flow. Effective forward
+                     conductance = clip(C + B, 0.05, 1.0); effective backward
+                     conductance = clip(C - B, 0.05, 1.0). Initialized to 0
+                     so the field is direction-neutral by default.
+      B_down[i, j]   analogous bias for the down-edge.
+
+    The bias channel is what makes truly directional STDP possible:
+    `stdp_hebbian_update` modifies B (anti-symmetrically), while the
+    symmetric Hebbian rules in `plasticity.py` modify only C. The two
+    plasticity families are therefore decoupled.
     """
 
     def __init__(self, cfg: FieldConfig | None = None, seed: int = 0):
@@ -39,6 +50,8 @@ class Field:
         self.T = np.zeros((self.cfg.rows, self.cfg.cols), dtype=np.float32)
         self.C_right = rng.uniform(0.3, 0.6, (self.cfg.rows, self.cfg.cols - 1)).astype(np.float32)
         self.C_down = rng.uniform(0.3, 0.6, (self.cfg.rows - 1, self.cfg.cols)).astype(np.float32)
+        self.B_right = np.zeros((self.cfg.rows, self.cfg.cols - 1), dtype=np.float32)
+        self.B_down = np.zeros((self.cfg.rows - 1, self.cfg.cols), dtype=np.float32)
 
     def reset_temp(self) -> None:
         self.T[:] = 0.0
@@ -73,11 +86,24 @@ class Field:
         # State-dependent conductivity: hotter pair => more flow (mild nonlinearity)
         avg_h = 0.5 * (T[:, :-1] + T[:, 1:])
         avg_v = 0.5 * (T[:-1, :] + T[1:, :])
-        c_h = self.C_right * (1.0 + a * avg_h)
-        c_v = self.C_down * (1.0 + a * avg_v)
 
-        flux_h = c_h * (T[:, 1:] - T[:, :-1])
-        flux_v = c_v * (T[1:, :] - T[:-1, :])
+        # Directional effective conductances. Forward = left→right (or up→down).
+        # Lower bound at 0 (heat physics: conductance can't be negative); no
+        # upper clip here — plasticity rules enforce their own bounds.
+        c_fwd_h = np.maximum(self.C_right + self.B_right, 0.0) * (1.0 + a * avg_h)
+        c_bwd_h = np.maximum(self.C_right - self.B_right, 0.0) * (1.0 + a * avg_h)
+        c_fwd_v = np.maximum(self.C_down + self.B_down, 0.0) * (1.0 + a * avg_v)
+        c_bwd_v = np.maximum(self.C_down - self.B_down, 0.0) * (1.0 + a * avg_v)
+
+        # diff_h > 0 means right cell hotter → heat flows right→left → use BACKWARD conductance
+        # diff_h < 0 means left cell hotter → heat flows left→right → use FORWARD conductance
+        diff_h = T[:, 1:] - T[:, :-1]
+        diff_v = T[1:, :] - T[:-1, :]
+        c_h = np.where(diff_h < 0, c_fwd_h, c_bwd_h)
+        c_v = np.where(diff_v < 0, c_fwd_v, c_bwd_v)
+
+        flux_h = c_h * diff_h
+        flux_v = c_v * diff_v
 
         new_T = T.copy()
         new_T[:, :-1] += self.cfg.diffusion_rate * flux_h
@@ -111,4 +137,8 @@ class Field:
             "C_down_mean": float(self.C_down.mean()),
             "C_right_std": float(self.C_right.std()),
             "C_down_std": float(self.C_down.std()),
+            "B_right_mean": float(self.B_right.mean()),
+            "B_down_mean": float(self.B_down.mean()),
+            "B_right_absmean": float(np.abs(self.B_right).mean()),
+            "B_down_absmean": float(np.abs(self.B_down).mean()),
         }

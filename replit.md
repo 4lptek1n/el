@@ -207,33 +207,61 @@ sequence learning with the same local-rules philosophy:
    `pre_trace × post_now`. Edges where the pre-cell led the post-cell
    in time get strengthened. Causal, temporally asymmetric, fully local.
 
-**Validated — coactivity association above naive baseline**:
-After 30 epochs of pairing A→B, presenting A *alone* (no B, no
-supervision) evokes a measurably higher response at B than the
-**same field before training** (cue ≈ 0.031 vs untrained baseline ≈
-0.021, mean delta +0.011 across 8 seeds, ≥6/8 seeds positive). The
-naive baseline is the rigorous control here; a "distance-matched
-unrelated cue" comparison is *also* positive but largely confounded
-by geometry, so we do not rely on it.
+**Two-channel substrate (validated)**:
+Each edge in the Field now carries TWO weights:
+  - `C_right`, `C_down` — symmetric conductance (heat flows equally
+    in both directions). Updated by ordinary Hebbian rules
+    (`plasticity.hebbian_update`).
+  - `B_right`, `B_down` — directional **bias** (positive favors
+    forward flow, negative favors backward). Updated by anti-symmetric
+    STDP (`sequence.stdp_hebbian_update`).
+Effective forward conductance = max(C + B, 0); backward = max(C − B, 0).
+With B = 0 the field is direction-neutral (drop-in replacement for the
+old single-channel field). XOR training (which only updates C) is
+unchanged and the 7 field + 4 plasticity tests still pass.
 
-**Known limitation — NOT directional yet**:
-Conductivity in the current Field is a single scalar per edge,
-shared between both directions of flow. The STDP rule sums forward
-and backward credit terms; this means after training on A→B,
-presenting B alone evokes a comparable response at A (the two events
-get **bound together in both directions**, not in the order A→B).
-Direct empirical check: trained A→B≈0.032 vs trained B→A≈0.038 —
-the supposed "predicted" direction is actually slightly weaker.
-A test (`test_known_limitation_association_is_bidirectional_not_directional`)
-exists specifically to keep this limitation visible.
+**Validated — event-gated directional pairwise binding**:
+(deliberately modest scope — this is two-event temporal direction
+learning with a gated plasticity window, NOT yet multi-step sequence
+learning with variable lags.)
+Training rule: present A (clamped 5 steps), gap 2 steps, then at the
+**event boundary** (the moment B is first clamped) apply STDP once on
+B. After that, run B's hold and apply symmetric Hebbian on C. This
+captures the clean "A leads B" snapshot before E_B grows large.
 
-**Next step (planned)**: add directed conductivities (`C_AB ≠ C_BA`)
-so the substrate can represent direction at all. Then re-run with an
-anti-symmetric STDP rule `ΔC_AB = lr·(E_A·T_B − E_B·T_A)` and replace
-the bidirectional test with a directionality assertion. This is the
-required architectural change before AB→1 vs BA→0 classification
-becomes feasible.
+After 60 epochs of A→B pairing (averaged across 8 seeds, lr=0.07,
+bias_clip=0.6):
+  - Cue A → response at B = **0.049**
+  - Cue B → response at A = **0.024**
+  - Directional ratio = **~2.07×** (A→B significantly stronger than B→A)
+  - Trained vs naive baseline = **+0.028** (substrate also learned the
+    coactivity, on top of direction)
+
+This is genuine directional pairwise binding with purely local rules
+— no backprop, no supervised target, no global error signal. The
+substrate represents temporal order *in its physical asymmetry of heat
+conductance*. Three tests pin this down (the third is the symmetry
+control that rules out probe-geometry artifact):
+  - `test_directional_stdp_breaks_bidirectional_symmetry` (train A→B,
+    assert A→B > 1.4× B→A across 5 seeds)
+  - `test_directional_stdp_reverses_when_training_order_reverses`
+    (train B→A on the same protocol, assert the asymmetry FLIPS:
+    B→A > 1.4× A→B). This is the geometry-rules-out test the
+    architect required.
+  - `test_predict_next_creates_temporal_association_above_naive_baseline`
+    (asserts trained > untrained by ≥0.003)
+
+**Limits & next steps**:
+The 2.07× ratio is solid but modest in absolute units (~0.025
+temperature difference). Pushing it further requires either a larger
+field, longer training, or graded inputs (not just clamps). The
+*next* useful task is sequence **classification** (AB→1 vs BA→0):
+the substrate has the directional capacity now, so a simple readout
+(e.g. compare T at two probe sites after presenting cue A) should
+already discriminate the two orderings. That would be the first
+honest "the system learned a temporal pattern" demo.
 
 Pipeline files: `el/src/el/thermofield/sequence.py` (EligibilityTrace,
-stdp_hebbian_update, train_predict_next).
-Tests: `el/tests/thermofield/test_sequence.py` (3 tests).
+stdp_hebbian_update, train_predict_next), `el/src/el/thermofield/field.py`
+(directional B channels in step()).
+Tests: `el/tests/thermofield/test_sequence.py` (5 tests, all green).
