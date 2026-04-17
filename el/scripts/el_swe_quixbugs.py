@@ -184,10 +184,32 @@ def build_candidates(tasks: list[dict], n_distract: int = 4, seed: int = 0
 
 
 # ---------- Encoding ----------
-def code_to_cells(code: str, grid: int, cells_per_token: int = 6
-                  ) -> list[tuple[int, int]]:
-    """Bigram-based positional encoding into L0."""
+def code_to_cells(code: str, grid: int, cells_per_token: int = 6,
+                  encoder: str = "tokens") -> list[tuple[int, int]]:
+    """Encode code into sparse L0 cells.
+
+    encoder='bigram': character-bigram positional hash (weak — used in v1)
+    encoder='tokens': Python tokenize stream — type+string+position hash.
+        Captures operators, keywords, identifiers, literals as semantic
+        units instead of raw chars.
+    """
     out: set[tuple[int, int]] = set()
+    if encoder == "tokens":
+        import tokenize, io
+        try:
+            toks = list(tokenize.generate_tokens(io.StringIO(code).readline))
+        except Exception:
+            toks = []
+        for ti, t in enumerate(toks):
+            key = f"L0|tok|{ti % 256}|{t.type}|{t.string}"
+            for s in range(cells_per_token):
+                h = hashlib.blake2b(f"{key}|{s}".encode(),
+                                    digest_size=4).digest()
+                idx = int.from_bytes(h, "big") % (grid * grid)
+                out.add((idx // grid, idx % grid))
+        if out:
+            return sorted(out)
+        # fall through to bigram on tokenize failure
     pad = code + "\x00"
     for i in range(len(code)):
         bg = pad[i] + pad[i + 1]
