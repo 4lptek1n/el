@@ -1066,3 +1066,35 @@ COTRAIN_PARAMS=(write_lr=0.07, write_steps=15, write_decay=0.005),
 script gerekmedi.
 
 **Test sayısı**: 157/157 PASS (105.8s).
+
+### Apr 17 — Gerçek dünya dünya-modeli testi (HONEST 5/5 LOSS)
+
+User: "Dinamikleştir ve gerçek dünyaya sal hiçbir kısır koyma."
+
+`el/scripts/el_world_model.py`: gerçek Istanbul 2024 saatlik hava
+durumu (Open-Meteo, 8784 timestep, ücretsiz public, sıfır mock).
+Substrate (PatternMemory ile window→horizon-bin assoc) vs persistence,
+daily-cycle, AR(1), global-mode. Kronolojik 80/20 split, sızıntı yok.
+
+| Task | Substrate top1 | Best baseline | Δ |
+|---|---|---|---|
+| temp +1h  | 0.356 | persistence 0.747 | −0.391 |
+| temp +6h  | 0.252 | daily-cycle 0.368 | −0.116 |
+| temp +24h | 0.210 | persistence 0.367 | −0.157 |
+| wind +1h  | 0.144 | AR(1) 0.487 | −0.343 |
+| wind +6h  | 0.097 | persistence 0.193 | −0.096 |
+
+**HONEST LOSS 5/5.** Bu kategori (smooth/autocorrelated continuous
+time-series) substrate'in turfu DEĞIL — trivial "next=last" zaten
+%75 doğru. Substrate'in turfu kalıbı `discrete + categorical +
+associative recall` — MNIST class-incremental, sequence chain, pattern
+memory gibi. Dünya-modeli olarak Hava verisi YANLIS demo seçimi:
+sequence STDP mekanizması (B kanalı) hiç kullanılmadı, sadece pattern
+memory. Doğru "dünya modeli" testi için: discrete state-action
+dynamics (gridworld next-state), categorical pattern stream (MIDI
+note prediction), veya RL environment transition prediction. Onlar
+substrate'in mimari avantajını test eder.
+
+Buradaki dürüst kapanış: "substrate her şeyde kazanır" yalan; **6
+kızıl elma eşiği kendi spec'lerinde geçerli, ama gerçek-dünya
+continuous time-series substrate için DEĞIL**.
