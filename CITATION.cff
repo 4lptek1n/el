@@ -1,0 +1,38 @@
+cff-version: 1.2.0
+message: "If you use this software in your research, please cite it as below."
+title: "el: an LLM-free, action-grounded PC agent with dual-memory architecture"
+abstract: >
+  el is an experimental PC agent that does not use an LLM. Instead, it pairs a
+  symbolic skill registry (exact episodic memory, grows by local plasticity on
+  verified action outcomes) with a small Decision-Transformer-style Action
+  Transformer (statistical generalization, trained on (command, state, action,
+  outcome) tokenized sequences). The architecture is inspired by McClelland's
+  Complementary Learning Systems (1995). Training signal is verified action
+  outcomes rather than next-token prediction. Claim is NOT that el outperforms
+  frontier LLMs on language tasks, but that it occupies an unexplored combination:
+  no LLM + real OS substrate + dual symbolic-neural memory + action tokenization.
+authors:
+  - family-names: "Keser"
+    given-names: "Alptekin"
+    email: "keseralptekin@gmail.com"
+version: "0.1.0"
+date-released: "2026-04-16"
+license: MIT
+repository-code: "https://github.com/4lptek1n/el"
+keywords:
+  - agent
+  - grounded-language
+  - decision-transformer
+  - complementary-learning-systems
+  - local-plasticity
+  - skill-library
+  - self-play
+  - open-source
+preferred-citation:
+  type: software
+  title: "el: an LLM-free, action-grounded PC agent with dual-memory architecture"
+  authors:
+    - family-names: "Keser"
+      given-names: "Alptekin"
+  year: 2026
+  url: "https://github.com/4lptek1n/el"

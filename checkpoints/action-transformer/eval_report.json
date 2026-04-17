@@ -1,0 +1,215 @@
+{
+  "n_eval": 300,
+  "first_action_accuracy": 0.8133333333333334,
+  "sequence_accuracy_names": 0.8133333333333334,
+  "sequence_accuracy_with_args": 0.0,
+  "name_jaccard": 0.8133333333333334,
+  "majority_first_action_baseline": 0.27666666666666667,
+  "majority_class": "sh",
+  "sample_misses": [
+    {
+      "raw": "~/Videos grep def main",
+      "verb": "find",
+      "gold": [
+        "grep"
+      ],
+      "pred": [
+        "file_search"
+      ]
+    },
+    {
+      "raw": "indeks ara XXX ~/notes",
+      "verb": "find",
+      "gold": [
+        "index_search"
+      ],
+      "pred": [
+        "file_search"
+      ]
+    },
+    {
+      "raw": "convert ~/Downloads to ~/Downloads",
+      "verb": "convert",
+      "gold": [
+        "now_iso"
+      ],
+      "pred": [
+        "sh"
+      ]
+    },
+    {
+      "raw": ".gitignore \u00f6zetle",
+      "verb": "summarize",
+      "gold": [
+        "uname"
+      ],
+      "pred": [
+        "file_read",
+        "summarize_text"
+      ]
+    },
+    {
+      "raw": "generate image of password",
+      "verb": "make_image",
+      "gold": [
+        "cpu_info"
+      ],
+      "pred": [
+        "noop"
+      ]
+    },
+    {
+      "raw": "organize ./src",
+      "verb": "organize",
+      "gold": [
+        "now_iso"
+      ],
+      "pred": [
+        "file_list",
+        "mkdir"
+      ]
+    },
+    {
+      "raw": "~/Videos temizle",
+      "verb": "clean",
+      "gold": [
+        "uname"
+      ],
+      "pred": [
+        "file_list"
+      ]
+    },
+    {
+      "raw": "~/Videos i\u00e7inde indeks password",
+      "verb": "index",
+      "gold": [
+        "uname"
+      ],
+      "pred": [
+        "index_search"
+      ]
+    },
+    {
+      "raw": "tidy ~/code",
+      "verb": "organize",
+      "gold": [
+        "cpu_info"
+      ],
+      "pred": [
+        "file_list",
+        "mkdir"
+      ]
+    },
+    {
+      "raw": "index.html \u00f6zetle",
+      "verb": "summarize",
+      "gold": [
+        "noop"
+      ],
+      "pred": [
+        "file_read",
+        "summarize_text"
+      ]
+    },
+    {
+      "raw": "disk free here",
+      "verb": "disk",
+      "gold": [
+        "sh"
+      ],
+      "pred": [
+        "process_list"
+      ]
+    },
+    {
+      "raw": "report disk usage at ~/Music",
+      "verb": "report",
+      "gold": [
+        "now_iso"
+      ],
+      "pred": [
+        "disk_usage"
+      ]
+    },
+    {
+      "raw": "post data.csv to https://raw.githubusercontent.com/test/test/main/file.txt",
+      "verb": "share",
+      "gold": [
+        "cpu_info"
+      ],
+      "pred": [
+        "http_post"
+      ]
+    },
+    {
+      "raw": "post data.csv to https://raw.githubusercontent.com/test/test/main/file.txt",
+      "verb": "share",
+      "gold": [
+        "cpu_info"
+      ],
+      "pred": [
+        "http_post"
+      ]
+    },
+    {
+      "raw": "~/notes commit at",
+      "verb": "commit",
+      "gold": [
+        "cpu_info"
+      ],
+      "pred": [
+        "sh"
+      ]
+    },
+    {
+      "raw": "./build ad\u0131n\u0131 ~/Desktop yap",
+      "verb": "rename",
+      "gold": [
+        "uname"
+      ],
+      "pred": [
+        "file_move"
+      ]
+    },
+    {
+      "raw": "~/Videos alt\u0131ndaki txt say\u0131s\u0131n\u0131 bul",
+      "verb": "count",
+      "gold": [
+        "uname"
+      ],
+      "pred": [
+        "sh"
+      ]
+    },
+    {
+      "raw": "count yml files in ~/Documents",
+      "verb": "count",
+      "gold": [
+        "noop"
+      ],
+      "pred": [
+        "sh"
+      ]
+    },
+    {
+      "raw": "summarize last commits",
+      "verb": "commit",
+      "gold": [
+        "git_log"
+      ],
+      "pred": [
+        "noop"
+      ]
+    },
+    {
+      "raw": "index search FIXME in /tmp",
+      "verb": "find",
+      "gold": [
+        "index_search"
+      ],
+      "pred": [
+        "file_search"
+      ]
+    }
+  ]
+}
