@@ -1,73 +1,70 @@
-"""Eşik 2 zorla — extreme grid scaling (224×224, N=128 ve N=256).
+"""Eşik 2 zorla — extreme grid scaling probe (224×224, large N).
 
-Tek-shot rapor scripti. Kapasite kırılma noktasını arar: pattern
-memory @ 224×224 grid, N=128 ve 256 paterni ile, 6 seed × 10 trial.
-Sonuç tablosu replit.md'ye girer; CI'ya eklenmez (yavaş).
+How many patterns can the substrate hold at MNIST-scale grid?
+This is the single biggest "is it embedded-relevant" question.
 """
 from __future__ import annotations
 import sys, time, numpy as np
-sys.path.insert(0, "src")
-from el.thermofield import FieldConfig
-from el.thermofield.pattern_memory import PatternMemory, random_pattern
+from pathlib import Path
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
-GRID = 224
-SEEDS = list(range(6))
-TRIALS = 10
-DROP = 0.5
-PAT_SIZE = max(4, int(0.025 * GRID * GRID))
-WTA_K = max(PAT_SIZE + 2, int(0.04 * GRID * GRID))
+from el.thermofield.field import FieldConfig
+from el.thermofield.pattern_memory import PatternMemory, random_pattern, corrupt
 
 
-def noisy_cue(p, drop, rng, n_cells, cols):
-    kn = max(1, int(round(len(p) * (1 - drop))))
-    keep = [p[i] for i in sorted(rng.choice(len(p), kn, replace=False))]
-    pset = set(p); ds = []
-    while len(ds) < kn:
-        idx = int(rng.integers(0, n_cells)); rc = (idx // cols, idx % cols)
-        if rc not in pset and rc not in ds: ds.append(rc)
-    return keep + ds
+def run(grid, N, seeds=(0, 1, 2), trials_per_pat=4, density_k=None, drop=0.5):
+    """Return mean recall accuracy and wall time per seed."""
+    if density_k is None:
+        # ~1% sparse pattern — typical neural code density
+        density_k = max(8, int(0.01 * grid * grid))
+    accs = []; t_writes = []; t_recalls = []
+    for seed in seeds:
+        rng = np.random.default_rng(seed)
+        patterns = [random_pattern(grid, grid, density_k, rng) for _ in range(N)]
+        cfg = FieldConfig(rows=grid, cols=grid)
+        pm = PatternMemory(cfg=cfg, seed=seed)
 
+        t0 = time.time()
+        for p in patterns:
+            pm.store(p)
+        t_writes.append(time.time() - t0)
 
-def run(N, seed):
-    cfg = FieldConfig(rows=GRID, cols=GRID)
-    rng = np.random.default_rng(seed)
-    mem = PatternMemory(cfg=cfg, seed=seed,
-                        write_steps=15, write_lr=0.07, write_decay=0.005,
-                        recall_steps=8,
-                        wta_k=WTA_K, wta_suppression=0.3, rule="hebb")
-    patterns = [random_pattern(GRID, GRID, k=PAT_SIZE, rng=rng) for _ in range(N)]
-    t0 = time.time()
-    for p in patterns: mem.store(p)
-    store_t = time.time() - t0
-    nc = GRID * GRID; correct = 0
-    rng2 = np.random.default_rng(seed * 31 + 7)
-    t0 = time.time()
-    for _ in range(TRIALS):
-        i = int(rng2.integers(0, N))
-        cue = noisy_cue(patterns[i], DROP, rng2, nc, GRID)
-        b, _, _ = mem.recall(cue)
-        if b == i: correct += 1
-    rec_t = time.time() - t0
-    return correct / TRIALS, store_t, rec_t
+        rng_test = np.random.default_rng(seed + 333)
+        correct = total = 0
+        t0 = time.time()
+        for true_idx, p in enumerate(patterns):
+            for _ in range(trials_per_pat):
+                cue = corrupt(p, drop, rng_test)
+                pred, _, _ = pm.recall(cue)
+                correct += int(pred == true_idx); total += 1
+        t_recalls.append(time.time() - t0)
+        accs.append(correct / max(1, total))
+    accs = np.asarray(accs)
+    return {
+        "acc_mean": float(accs.mean()),
+        "acc_sem": float(accs.std() / np.sqrt(len(accs))),
+        "write_s": float(np.mean(t_writes)),
+        "recall_s": float(np.mean(t_recalls)),
+        "density_k": density_k,
+    }
 
 
 def main():
-    print(f"=== Extreme capacity probe @ {GRID}×{GRID} grid ===")
-    print(f"PAT_SIZE={PAT_SIZE}  WTA_K={WTA_K}  drop={DROP}  "
-          f"seeds={len(SEEDS)}  trials={TRIALS}")
-    print(f"{'N':>5} | {'mean_acc':>10} | {'std':>6} | {'avg_store_s':>12} | {'avg_recall_ms':>14}")
-    for N in [128, 256]:
-        accs = []; sts = []; rts = []
-        for seed in SEEDS:
-            t0 = time.time()
-            acc, st, rt = run(N, seed)
-            accs.append(acc); sts.append(st); rts.append(rt)
-            print(f"  seed={seed} N={N:3d}  acc={acc:.2f}  "
-                  f"store={st:.1f}s  recall={rt*1000/TRIALS:.1f}ms/cue  "
-                  f"({time.time()-t0:.1f}s wall)", flush=True)
-        a = np.array(accs)
-        print(f"{N:>5} | {a.mean():>10.3f} | {a.std(ddof=1):>6.3f} | "
-              f"{np.mean(sts):>12.1f} | {np.mean(rts)*1000/TRIALS:>14.2f}", flush=True)
+    print("=" * 78)
+    print("EŞİK 2 EXTREME — large grid capacity")
+    print("=" * 78)
+    rows = []
+    for grid, N in [(64, 32), (64, 64), (128, 64), (128, 128), (224, 128), (224, 256)]:
+        chance = 1.0 / N
+        r = run(grid, N)
+        verdict = ("PASS" if r["acc_mean"] >= 0.5
+                   else "WEAK" if r["acc_mean"] >= 0.25 else "FAIL")
+        rows.append((grid, N, chance, r, verdict))
+        print(f"  grid={grid:>3}×{grid:<3}  N={N:>3}  k={r['density_k']:>3}  "
+              f"chance={chance:.3f}  acc={r['acc_mean']:.3f} ± {r['acc_sem']:.3f}  "
+              f"write={r['write_s']:.1f}s  recall={r['recall_s']:.1f}s  [{verdict}]")
+    print()
+    print("Verdict per row written above.")
 
 
 if __name__ == "__main__":
