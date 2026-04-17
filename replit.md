@@ -1467,3 +1467,90 @@ on hot loop. Tests still green.
 
 New files: `el/scripts/el_swebench_classify.py`,
 `el/data/swebench/train_arrow/` (351 MB on disk).
+
+---
+
+### Apr 17 son tur — VERIFIED-SIGNAL benchmark (HONEST loss)
+
+User pushback on previous SWE-bench result: *"Sen direkt benchmarkı next
+token olasak değil verified action signal olarak vermeliydin."* Önceki
+35-class repo classification (acc 0.866) yüzeysel sinyaldi — URL
+tahmini gibiydi. Asıl SWE-bench verified sinyali: **bu issue'nun
+çözen patch'i hangisi?** (FAIL_TO_PASS testleri docker harness'ında
+geçen biricik patch.)
+
+**Probe** (`el/scripts/el_swebench_patch_match.py`): 1500 issue, her
+biri için 10 aday patch (1 doğru + 9 distractor, AYNI repo'dan — yani
+"repo'yu tahmin et" yüzeysel sinyali yok edildi). Skor =
+cosine(encode(issue), encode(patch)). Substrate hiç eğitilmedi, sadece
+imprint pool (1500 doc) → frozen encoder.
+
+**CAVEAT (architect notu)**: sadece pozitif (issue, true_patch) çifti
+SWE-bench docker harness'ında verified; distractor'lar AYNI REPO'dan
+gelen başka issue'ların patch'leridir, "bu issue'ya karşı negatif"
+diye per-pair re-verify edilmedi. Yani benchmark "verified-positive +
+same-repo-distractor proxy", katı "binary verified pairwise" değil.
+Ayrıca imprint pool full corpus'tan örnekleniyor (transductive),
+substrate eval issue'larını label-siz görmüş olabilir. Bu sonucu
+substrate LEHİNE biraz şişirir; gerçek kayıp daha büyük olabilir.
+
+| metod                          | top-1 | top-3 | top-5 | MRR   |
+|--------------------------------|-------|-------|-------|-------|
+| random (analytic)              | 0.100 | 0.300 | 0.500 | 0.293 |
+| trigram cosine (4096-d hash)   | **0.368** | **0.643** | **0.789** | **0.547** |
+| frozen substrate cosine        | 0.319 | 0.575 | 0.751 | 0.500 |
+
+**Honest verdict**: substrate verified-signal'da trigram'a kaybetti
+(-0.049 top-1). Repo classification'da (yüzeysel sinyal) trigram'ı
+yeniyordu (0.866 vs 0.664). Patch matching'de substrate'in
+nonlineer dinamiği trigram cosine'a karşı katma değer üretmedi —
+bu retrieval task'ının taşıdığı sinyal trigram istatistiğine zaten
+sığıyor. Substrate fingerprint stable: `ca10faeed6cbe91938c08dfcd62a4f24`
+(query'ler boyunca sabit, frozen kanıtı).
+
+**Mimari sonuç**: substrate **knowledge memory + classification head**
+olarak güçlü (35-way repo, MNIST class-incremental, pattern recall).
+**Verified action signal retrieval** için trigram baseline'ın altında.
+Bu, plana yeni bir uyarı ekler: substrate'i "kod retrieval engine"
+olarak satmak yanlış olur — kapasitesi var ama trigram'dan üstün
+değil. Yeni uyarı tablosu:
+
+  - ✅ Pattern recall (28×28, 224×224 grid, N=256)
+  - ✅ Repo classification (35-way, +0.20 over trigram)
+  - ✅ Class-incremental MNIST (5 task → 0.832)
+  - ❌ Patch retrieval (verified signal, 10-way) — trigram önde
+
+### Apr 17 — Eşik 3, 4, 2-extreme yeniden çalıştırma (tüm yeşil)
+
+Plana göre üç probe re-run, hepsi PASS:
+
+**Eşik 3 multi-task (`scripts/multitask_probe.py`)**:
+  - pat_then_seq @ lr=0.07: pat_keep=99%, seq_keep=94% → WIN
+  - seq_then_pat @ lr=0.14: pat_keep=103%, seq_keep=108% → WIN
+
+**Eşik 4 persistence (`scripts/persistence_probe.py`)** — DÜZELTME:
+  Önceki özet "16+16" diyordu ama script default'u n_first=4, n_second=4 idi
+  (architect doğru yakaladı). Default'u gerçek 16+16 yaptım, dürüst rakamlar:
+
+  | condition                          | acc   | sem   |
+  |------------------------------------|-------|-------|
+  | mono (32 scratch)                  | 0.249 | 0.017 |
+  | load+continue (16+16)              | 0.249 | 0.017 |
+  | B-only scratch (no A memory)       | 0.269 | 0.013 |
+  | round-trip before save             | 0.535 | 0.019 |
+  | round-trip after load              | 0.535 | 0.019 |
+
+  - load_keep = 100% (load+continue mono ile aynı)
+  - round-trip drift = 0.000 (save→load birebir)
+  - **HONEST PARTIAL**: 28×28 grid 32 patternde satüre — load+continue
+    B-only scratch'i geçmiyor (architectural ceiling). Persistence
+    mekaniği çalışıyor (load_keep=100%, drift=0) ama bu rejimde
+    cumulative kazanç yok. Daha küçük yüklerde (n=4+4) WIN, büyük
+    yüklerde grid kapasitesi konuşuyor.
+
+**Eşik 2 EXTREME (`scripts/extreme_capacity.py`)**:
+  - 224×224 N=128 → acc 0.999 (chance 0.008, 125× chance)
+  - 224×224 N=256 → acc 0.999 (chance 0.004, 250× chance)
+  - Substrate **N=256'da hâlâ kırılmadı**.
+
+Substrate fingerprint: tüm probe'larda sabit (frozen invariant tutuyor).

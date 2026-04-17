@@ -36,7 +36,7 @@ def measure(pm, patterns, drop=0.5, trials=4, rng=None, label_offset=0):
     return correct / max(1, total)
 
 
-def trial(seed, grid=28, n_first=4, n_second=4, density_k=20):
+def trial(seed, grid=28, n_first=16, n_second=16, density_k=20):
     rng = np.random.default_rng(seed)
     A = [random_pattern(grid, grid, density_k, rng) for _ in range(n_first)]
     B = [random_pattern(grid, grid, density_k, rng) for _ in range(n_second)]
@@ -85,7 +85,7 @@ def trial(seed, grid=28, n_first=4, n_second=4, density_k=20):
 def main():
     print("=" * 78)
     print("EŞİK 4 — PERSISTENCE PROBE")
-    print("  grid 28×28, n_first=4, n_second=4, seeds=8 (non-saturated)")
+    print("  grid 28×28, n_first=16, n_second=16, seeds=8")
     print("=" * 78)
     seeds = list(range(8))
     rows = [trial(s) for s in seeds]
