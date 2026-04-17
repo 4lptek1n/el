@@ -28,6 +28,51 @@ def hebbian_update(field: Field, lr: float = 0.01, decay: float = 0.001) -> None
     np.clip(field.C_down, 0.05, 1.0, out=field.C_down)
 
 
+def gated_hebbian_update(
+    field: Field,
+    output_positions,
+    *,
+    target: float | None = None,
+    threshold: float = 0.5,
+    lr_pos: float = 0.01,
+    lr_inh: float = 0.04,
+    decay: float = 0.001,
+) -> None:
+    """User's proposed homeostatic rule:
+
+        Δw = η · (pre · post) − η_inh · (pre · post · [output > threshold])
+
+    When the output cell exceeds the threshold (and we want it low), the
+    inhibitory term turns on and weakens the same co-active synapses that
+    Hebbian learning would strengthen. This breaks the symmetry between
+    the four XOR examples that share the same paths.
+
+    If `target` is provided, the inhibition only triggers when output
+    overshoots the target (output > target + small margin), so the rule
+    naturally handles both "should be high" and "should be low" cases.
+    """
+    T = field.T
+    co_h = T[:, :-1] * T[:, 1:]
+    co_v = T[:-1, :] * T[1:, :]
+
+    out_avg = float(np.mean([T[r, c] for r, c in output_positions]))
+    if target is not None:
+        # Inhibit only when output is too high relative to target.
+        gate = 1.0 if out_avg > (target + 0.1) else 0.0
+        # Positive Hebbian only when output is too low relative to target.
+        pos_gate = 1.0 if out_avg < (target - 0.1) else 0.5
+    else:
+        gate = 1.0 if out_avg > threshold else 0.0
+        pos_gate = 1.0
+
+    eff_lr = pos_gate * lr_pos - gate * lr_inh
+
+    field.C_right += eff_lr * co_h - decay * field.C_right
+    field.C_down += eff_lr * co_v - decay * field.C_down
+    np.clip(field.C_right, 0.05, 1.0, out=field.C_right)
+    np.clip(field.C_down, 0.05, 1.0, out=field.C_down)
+
+
 def supervised_nudge(
     field: Field,
     output_positions,
