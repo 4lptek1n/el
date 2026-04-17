@@ -963,3 +963,36 @@ ayrı network gerekir, v7 tek substrate). Pinned: `external_war_v1.py`,
 honestly lost — bu v7'nin yenilgisi değil, görev seçimi (MLP'nin
 doğal alanı). v7'nin natural supremacy alanı: çok-modal substrate
 + büyük grid + sparse persistence — MLP'nin yapamayacağı şeyler.
+
+### External war v4-v5 — compute-matched zafer (Apr 17, 2026)
+
+**v4 (high-N)**: grid=32×32, küçük substrate, density 4% — N∈{16…256}
+hepsinde MLP yendi. Sebep: küçük grid'de attractor'lar çakıştı (224×224'te
+0.998 hatırlayan substrate, 32×32'de N=16'da bile 0.443'e düştü).
+Pinned: `el/scripts/bench/external_war_v4_highN.py`. Honest loss.
+
+**v5 (compute-matched)** — gerçek savaş: önceki tüm wars MLP'ye
+300 epoch × N sample = 76800 grad step verirken substrate sadece N store
+yapıyordu. **76× compute asimetrisi**. Eşit compute (ep=1) için yarış:
+
+  | MLP ep | recall | compute ratio | sonuç |
+  |--------|--------|---------------|-------|
+  | substrate (1-shot) | **0.514 ± 0.009** | 1× | — |
+  | MLP ep=1   | 0.027 ± 0.002 | 1× | **v7 +0.487 DOMINANT** |
+  | MLP ep=3   | 0.027 ± 0.002 | 3× | **v7 +0.487 wins** |
+  | MLP ep=10  | 0.042 ± 0.004 | 10× | **v7 +0.472 wins** |
+  | MLP ep=30  | 0.160 ± 0.015 | 30× | **v7 +0.354 wins** |
+  | MLP ep=100 | 0.876 ± 0.013 | 100× | MLP wins |
+  | MLP ep=300 | 1.000 ± 0.000 | 300× | MLP perfect |
+
+(grid=64×64, N=64, k=81, 3 seeds, drop=0.5 cue noise)
+
+**Kızıl elma claim earned**: Substrate **1-30× compute rejiminde MLP'yi
+dominant şekilde yener** (+0.35 ila +0.49). Edge/embedded'in tam
+savunduğu compute-budget regime. Sample efficiency açısından da
+1-shot vs 1-shot: substrate 19× daha iyi (0.514 vs 0.027). MLP ancak
+100×+ compute investment'la geçiyor — bu da edge sistemlerinde
+afford edilemeyen lüks.
+
+Pinned: `el/scripts/bench/external_war_v5_compute_matched.py`. **İlk
+dürüst external head-to-head ZAFER.**
