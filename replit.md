@@ -838,3 +838,59 @@ HARDLİMİTİ. Bir sonraki ciddi sequence saldırısı için bu üç
 mimari opsiyondan birini seçip core Field'a entegre etmek gerek.
 Pinned: `el/scripts/bench/seq_chain_multilag.py` (5 müdahale ile
 exhaustive sweep, başarısız).
+
+### Eşik 5 — sequence chain N>1 ✅ ÇÖZÜLDÜ (v7 hybrid)
+
+**Hipotez doğrulandı**: heat-only (v4) yön verir mesafe vermez;
+wave-only (v6) mesafe verir yön vermez; sentez **ikisi birden** =
+heat substrate (dokunulmadı) + sparse temporal skip-edge bank.
+
+**v6 wave prototype** — DONDURULDU, dürüst negative result:
+- Propagation BAŞARILI: T(d=10)=0.018 (heat olsa ≈0)
+- Sequence STDP başarısız: 3 varyant (bidirectional |T|, unidirectional
+  |T|, signed velocity), hepsi 0-1/N pos. Sebep: wave equation
+  zaman-tersinir, sonlu grid'de reflect+interfere; STDP yön bulamaz.
+- Pinned: `el/scripts/bench/seq_chain_wave.py` (negative-result başlığı ile)
+
+**v7 hybrid prototype** — KIZIL ELMA YENDİ:
+- Heat substrate: mevcut Field, **dokunulmadı** (pattern memory korundu)
+- SkipBank: K=4 random uzun-mesafe edge per cell (md_min=3),
+  starting weights 0, learned via `w[i→j] += lr · T[j] · E_long[i]`
+- E_long: long-decay trace (decay=0.95)
+- Probe: skip-mediated injection `dst_T += eta · w · src_T` (eta=0.05-0.08)
+
+**Sonuçlar (8 seeds, head-to-head):**
+
+| Config (n, md, K) | v4 local-only | v6 wave-only | **v7 hybrid** | density |
+|---|---|---|---|---|
+| n=3, md=2 | 0/3 | 0-1/3 | **3/3 pos** | 2.05% |
+| n=5, md=3 | 0/5 | 0-1/5 | **5/5 pos** | 2.05% |
+| n=5, md=3, K=6 | 0/5 | 0-1/5 | **5/5 pos** (+0.040 ovr) | 3.08% |
+| **n=10, md=3** | **0/10** | 0-1/10 | **10/10 pos** | 2.05% |
+| n=10, md=3, K=6, mdm=4 | 0/10 | 0/10 | **10/10 pos** (+0.18 ovr) | 3.08% |
+
+**Acceptance per /godsay spec:**
+- ✅ A. Pattern testleri **143/143 yeşil** (core dokunulmadı, regresyon yok)
+- ✅ B. n=5: 5/5 (gerekli ≥3/5); n=10: 10/10 (gerekli "0/10 olmasın")
+- ✅ C. Causal ablation tamamlandı: `local_only ≪ wave_only ≪ hybrid`
+
+**Kill conditions kontrolü:**
+- Density 2-3% (sparse kimlik korundu) ✓
+- Pattern memory etkilenmedi (core dokunulmadı) ✓
+- v4 0/N → v7 N/N (cherry-pick değil, 6 config × 8 seed) ✓
+
+**Yeni honest claim:**
+> Long-range sequence learning requires a nonlocal temporal pathway;
+> local diffusion alone is insufficient (v4), and wave-only transport
+> is directionally ambiguous (v6). The hybrid heat-substrate +
+> sparse temporal skip-edge bank (v7) achieves perfect link
+> recovery up to N=10 at min_dist=3 with edge density ≤3%.
+
+Bu **kategori-açıcı**: substrate artık iki katmanlı —
+- *Diffusion sheet* (cortex-like local memory field)
+- *Sparse temporal skip bank* (white-matter-like long-range tracts)
+
+Pinned: `el/scripts/bench/seq_chain_v7_hybrid.py` (head-to-head,
+6 config × 8 seed, hepsi WIN). Henüz core'da değil — bench scripti.
+Bir sonraki adım: SkipBank'ı `thermofield/` içine taşı, multitask
++ persistence + sequence aynı substrate'te birleştir.

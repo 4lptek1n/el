@@ -1,0 +1,152 @@
+2. seç.
+Ama bir farkla:
+
+Wave-only v6’yı negatif sonuç olarak dondur.
+Ana substrate’i bozma.
+Heat ana kanal kalsın, sequence için dar ve sparse bir temporal skip-edge bank ekle.
+
+Opus’un teşhisi burada doğru:
+wave fiziksel taşıma veriyor ama yön vermiyor.
+Bu artık hyperparameter sorunu değil, zaman-tersinirlik + reflection/interference sorunu.
+
+⸻
+
+Mission
+
+seq_v7_hybrid_temporal
+	•	Mevcut heat/diffusion substrate’i aynen koru
+	•	Pattern memory / multitask / persistence tarafına dokunma
+	•	Sequence için ayrı, dar, sparse, local-kimliği bozmayan bir temporal skip-edge bank ekle
+	•	Bu bank sadece sequence learning sırasında aktif olsun
+
+Amaç
+
+md >= 2, N > 2 sequence zincirlerini açmak
+ve bunu v4 local-only sisteme karşı head-to-head kanıtlamak
+
+⸻
+
+Why now
+
+Çünkü şu an tablo net:
+	•	v4: yön var, mesafe yok
+	•	v6 wave-only: mesafe var, yön yok
+
+Yani artık doğru sentez şu:
+
+Heat = yön + stabil attractor
+Skip temporal bank = uzun menzil
+
+Wave-only’yi zorlamaya devam etmek seni haftalarca oyalayabilir.
+Ama hybrid skip-edge yaklaşımı:
+	•	mevcut 4/4 eşiği bozmaz
+	•	açık kalan tek mimari darboğaza vurur
+	•	benchmark savaşı başlamadan önce eline gerçek bir sequence cevabı verir
+
+⸻
+
+Acceptance
+
+Aşağıdakiler gelirse geçti say:
+
+A. Pattern tarafı bozulmamalı
+	•	mevcut pattern memory regression suite geçecek
+	•	mevcut multitask/persistence testleri bozulmayacak
+	•	138/138 çizgisinden geri düşmeyeceksin
+
+B. Sequence tarafında v4’ü net geçmeli
+
+Preregistered seeds ile, md >= 2 altında:
+
+N = 5
+	•	aggregate sequence discrimination > v4’ün en az 2x’i
+	•	veya en az 3/5 link 2σ-pozitif
+
+N = 10
+	•	artık 0/10 olmayacak
+	•	en azından anlamlı sayıda link chance üstüne çıkacak
+	•	aggregate metric pozitif olacak
+
+C. Dürüst causal ablation
+
+Şunları birlikte raporla:
+	•	local-only (v4)
+	•	wave-only (v6 negative result)
+	•	hybrid skip-edge (v7)
+
+Ve yeni claim şu olsun:
+
+Long-range sequence learning requires a nonlocal temporal pathway; local diffusion alone is insufficient, and wave-only transport is directionally ambiguous.
+
+⸻
+
+Kill condition
+
+Şu durumlardan biri olursa dalı kapat:
+	1.	skip-edge bank ancak yoğunlaşarak çalışıyorsa
+yani sparse kimlik bozuluyorsa
+	2.	pattern/multitask tarafında >%5 ciddi regresyon yaratıyorsa
+	3.	N=5’te bile v4’ü net geçmiyorsa
+	4.	başarı sadece cherry-picked topology / seed / ordering ile geliyorsa
+
+Bunlardan biri olursa:
+
+v7’yi future work olarak dondur, benchmark war’a geç.
+
+⸻
+
+Next if win
+
+Bu dal geçerse sıradaki hamle:
+
+1. Multi-task içine sequence’i geri sok
+	•	pattern + sequence + persistence aynı substrate’te
+	•	ordering tekrar test
+
+2. Benchmark suite’e sequence görevlerini ekle
+	•	SNN
+	•	EWC
+	•	replay baseline
+	•	senin hybrid substrate
+
+3. Sonra ancak istersen wave’e geri dön
+
+Ama o zaman wave’i core değil, white-matter-like propagation layer olarak düşünürsün.
+
+⸻
+
+Imagine
+
+Eğer bu kazanırsa, elindeki şey sıradan bir SNN ya da LLM alternatifi olmaktan çıkar.
+
+Şuna dönüşür:
+
+Diffusion sheet = cortex-like local memory field
+Sparse temporal skip bank = white-matter-like long-range sequence tracts
+
+Yani:
+	•	heat katmanı hatırlar
+	•	temporal bank sırayı taşır
+	•	STDP / plasticity bu ikisini zamanla birlikte örgütler
+
+Bu, bence gerçekten yeni bir kategori açar:
+
+memory substrate + temporal transport substrate
+
+Ve uzun vadede bu bank statik olmaz;
+tecrübeyle kendi uzun-menzilli yollarını büyüten bir sisteme dönüşebilir.
+Yani bugün “skip-edge bank” dediğin şey, yarın:
+
+kendini inşa eden iç bağlantı dokusu
+
+olur.
+
+⸻
+
+Net karar
+
+Wave-only’yi dokümante et ve kapat.
+Hybrid heat + sparse temporal skip-edge bank’e başla.
+Bu, şu anda en yüksek başarı / risk oranı olan yol.
+
+İstersen bunu şimdi Opus 4.7’ye yapıştırmalık tek parça mission spec halinde de kısaltayım.

@@ -1,6 +1,31 @@
-"""Sequence chain v6 — WAVE substrate prototype.
+"""Sequence chain v6 — WAVE substrate prototype. NEGATIVE RESULT, FROZEN.
 
-Hypothesis: heat diffusion erases information exponentially with
+================================================================
+STATUS: FROZEN as negative result, do not tune further.
+================================================================
+
+OUTCOME:
+  - Wave PROPAGATION works: T(d=10)=0.018 vs heat ≈ 0 (kategori-açıcı)
+  - Wave SEQUENCE LEARNING fails: 3 STDP variants tried (bidirectional
+    |T|, unidirectional |T|, signed velocity), all yield 0-1/N pos
+    links at n=5+, md=3+. See log in replit.md.
+
+ROOT CAUSE (architectural, not tuning):
+  Wave equation is time-reversible. On a finite grid, waves reflect
+  and superpose into standing+traveling interference. Local STDP
+  measuring T*E at any cell sees this global mixture and cannot
+  recover the source direction. Damping (gamma) trades distance
+  for direction: gamma↑ collapses to heat (no distance), gamma↓
+  loses direction. No gamma satisfies both.
+
+LESSON FOR v7 HYBRID:
+  - Heat substrate gives DIRECTION but no distance (v4 result).
+  - Wave substrate gives DISTANCE but no direction (v6 result).
+  - The synthesis is NOT pure-physics; it requires a separate
+    sparse temporal skip-edge bank carrying long-range signals
+    over the existing heat substrate. See seq_chain_v7_hybrid.py.
+
+Hypothesis (original): heat diffusion erases information exponentially with
 distance, so STDP cannot bridge anchor pairs with min_dist > 1.
 Wave equation propagates energy WITHOUT dissipation (other than
 optional viscous damping), so A's signal reaches B even at d=10.
