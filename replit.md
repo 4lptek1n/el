@@ -342,37 +342,61 @@ ONLY for cells that did NOT just spike on the same tick. This avoids
 the off-by-one that would have made `K=2` block only 1 future tick
 (an architect-flagged bug, fixed and regression-tested).
 
-### Pattern memory benchmark — NEGATIVE FINDING (documented honestly)
-First attempt at end-to-end associative recall on the substrate. The
-mechanics work — store P patterns via clamped Hebb writes, recall
-top-N hottest cells after non-clamped cue injection, Jaccard match.
+### Lateral inhibition / k-WTA (`inhibition.py`)
+Two cheap operators that compose with `field.step()` to give the
+substrate a sparse-coding regime:
 
-**But the controlled baseline test failed**: with 3 patterns and 40%
-drop cues, an UNTRAINED instance (write_steps=0) outperforms a
-TRAINED one. Probe script `el/scripts/probe_pattern_memory.py` shows
-~0.90 untrained vs ~0.45 trained on the harder noisy-cue protocol.
+- `kwta_step(T_flat, k, suppression)`: spare EXACTLY `k` cells (the
+  k highest, ties broken by index via `argpartition`+mask, NOT by
+  value boundary — an architect-flagged correctness fix), multiply
+  the remaining n-k by `suppression`.
+- `global_gain_step(T_flat, target_mean, rate)`: soft homeostasis,
+  pulls mean(T) down toward `target_mean` when activity is too high.
+  Never pushes upward.
 
-Diagnosis: the substrate's positive-only conductances + Hebbian-only
-plasticity have no mechanism to suppress non-pattern cells, and after
-several writes all C edges are uniformly elevated → diffusion smears
-heat everywhere → the Hebb writes actively HURT discrimination.
-There is no inhibition, no winner-take-all, and no negative weights —
-all of which real Hopfield-style associative memories need.
+Both are pure in-place numpy ops on the flat T array. They are what
+turns the diffuse heat field into a system that can host attractors.
 
-What the tests now assert (`test_pattern_memory.py`, 4 tests, all green):
-- The pipeline runs end-to-end (smoke test).
-- Single-pattern self-recall produces a non-zero overlap (mechanism
-  works).
-- **REGRESSION GUARD**: trained does NOT yet exceed untrained by
-  more than 0.05 lift. When we add lateral inhibition / WTA, this
-  test will fail and force us to flip it to the positive direction.
-- Random cues don't collapse to a single winner.
+### Pattern memory benchmark — three causal claims, all tested
+First end-to-end associative recall on the substrate, with the
+architectural diagnosis encoded as three complementary tests over a
+**pre-registered seed set `range(0, 12)`** and **identical configs**
+across the WTA-on / WTA-off arms (only `wta_k` toggled). 20-trial
+hard noisy-cue protocol: 50 % of pattern cells kept, 50 % swapped for
+random distractor cells.
 
-Next architectural piece (clearly identified by this finding):
-lateral inhibition + winner-take-all readout layer to convert the
-substrate from a diffuse heat field into a true attractor system.
+**Claim A — `test_no_inhibition_training_hurts_recall`**:
+Without WTA, training is *actively harmful*. Mean lift across 12
+seeds = **-0.36**, with **12/12 seeds non-positive**. Asserts mean
+lift < -0.10 and ≥ 9 / 12 seeds strictly negative.
+
+**Claim B — `test_kwta_causally_improves_training_lift_paired`**
+(the strongest claim):
+For every seed, run WTA-on and WTA-off paired. Mean
+`lift_on − lift_off` = **+0.40**, **12/12 seeds improved**. Asserts
+mean delta > 0.20 and ≥ 11 / 12 seeds positive. This is clean causal
+evidence that the WTA mechanism — not the longer write protocol or
+anything else — is the active ingredient.
+
+**Claim C — `test_kwta_on_training_no_longer_hurts`**
+(the conservative claim):
+With WTA on, training is at least neutral. Mean lift = **+0.04**,
+8 / 12 non-negative. Asserts mean lift > 0 and ≥ 7 / 12 non-negative.
+Small absolute number; the architecture is still the simplest
+possible (positive-only conductances, no anti-Hebb, no negative
+weights), so a +0.04 mean is the honest current ceiling.
+
+Plus auxiliary unit tests for `kwta_step` exact-k tie semantics and
+`global_gain_step` homeostatic behaviour (never pushes T upward).
+
+Honest framing: the substrate does not yet act as a strong attractor
+network on raw recall, but adding inhibition causally rescues
+training from being net-harmful, and the rescue is large and
+unambiguous in every paired seed. Next obvious moves to grow the
+absolute lift: anti-Hebb on non-coactive cells, longer write
+protocol with periodic homeostatic decay, sparser random initial C.
 
 ### Total test status
-56 tests green across worldmodel, field, plasticity, sequence, runner,
+60 tests green across worldmodel, field, plasticity, sequence, runner,
 layered, crossbar, spikes, and pattern_memory modules
 (interneurons module excluded from quick CI; runs slower).

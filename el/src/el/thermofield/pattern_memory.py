@@ -32,6 +32,7 @@ from typing import Sequence
 import numpy as np
 
 from .field import Field, FieldConfig
+from .inhibition import global_gain_step, kwta_step
 from .plasticity import hebbian_update
 
 
@@ -45,6 +46,13 @@ class PatternMemory:
     write_steps: int = 6           # relaxation steps while clamping during write
     write_lr: float = 0.10         # Hebb LR during write
     recall_steps: int = 8          # relaxation steps after cue injection
+    # Inhibition / WTA — set wta_k > 0 to enable competitive recall.
+    # When enabled, after every relaxation step the substrate keeps the
+    # top-k hottest cells and decays the rest by `wta_suppression`.
+    wta_k: int = 0
+    wta_suppression: float = 0.5
+    use_global_gain: bool = False
+    target_mean: float = 0.05
     field: Field | None = None
     patterns: list[Pattern] = dc_field(default_factory=list)
 
@@ -68,6 +76,14 @@ class PatternMemory:
         f.inject(list(pattern), [1.0] * len(pattern))
         for _ in range(self.write_steps):
             f.step()
+            # Apply inhibition during write too — so the Hebb step only
+            # potentiates edges between cells that survived competition,
+            # producing sparse stored patterns instead of dense smear.
+            if self.wta_k > 0:
+                T_flat = f.T.reshape(-1)
+                kwta_step(T_flat, self.wta_k, self.wta_suppression)
+            if self.use_global_gain:
+                global_gain_step(f.T.reshape(-1), self.target_mean)
             hebbian_update(f, lr=self.write_lr, decay=0.0)
         f.reset_temp()
         # Persist the canonical pattern for later matching
@@ -96,6 +112,10 @@ class PatternMemory:
         f.inject(list(cue), [1.0] * len(cue), clamp=False)
         for _ in range(self.recall_steps):
             f.step()
+            if self.wta_k > 0:
+                kwta_step(f.T.reshape(-1), self.wta_k, self.wta_suppression)
+            if self.use_global_gain:
+                global_gain_step(f.T.reshape(-1), self.target_mean)
 
         if top_n is None:
             top_n = max(len(p) for p in self.patterns)
