@@ -1554,3 +1554,112 @@ Plana göre üç probe re-run, hepsi PASS:
   - Substrate **N=256'da hâlâ kırılmadı**.
 
 Substrate fingerprint: tüm probe'larda sabit (frozen invariant tutuyor).
+
+---
+
+### Apr 17 — Yol 1/2/3: GERÇEK OUTPUT denemesi (üçü de koşturuldu)
+
+User mandate: *"Gerçekten output üretebilmesi lazım, hangisi yapabilir?"*
+Substrate'in generative head'i yok — yani metin/kod yazmıyor. Üç yolu
+da bizzat denedik. **Hepsi gerçek koşuldu, sonuçlar dürüstçe:**
+
+#### Yol 1 — RETRIEVAL-AS-OUTPUT (`scripts/output_yol1_retrieval.py`)
+
+19,008 (issue, patch) corpus'unu encode ettik (~10 dk), 5 novel query
+attık, top-K cosine + 0.55 confidence floor.
+
+| query                                         | top-1 cos | top-1 doğru mu? | refuse? |
+|----------------------------------------------|-----------|------------------|---------|
+| Q1 pandas DST resample                       | 0.565     | repo doğru, konu YANLIŞ | hayır |
+| Q2 BartTokenizer add_tokens                  | 0.561     | tamamen yanlış (conda) | hayır |
+| Q3 numpy structured array Py3.11             | 0.525     | yanlış            | EVET    |
+| Q4 pytest conftest pytest_plugins            | 0.536     | yanlış (pants)    | EVET    |
+| Q5 sklearn StandardScaler partial_fit overflow | 0.530   | yanlış (jax)      | EVET    |
+
+**Verdict:** retrieval-as-output GERÇEK output veriyor (verbatim patch
+metni dönüyor) ama **kalite zayıf** — novel query'lerde top-1 genelde
+yanlış. Refuse mekanizması doğru çalışıyor (3/5'te "bilmiyorum").
+Dürüstçe: substrate bilmediğini biliyor, ama bildiklerinin de doğru
+match'ini garantilemiyor. Substrate fingerprint sabit.
+
+#### Yol 2 — HYBRID frozen substrate + char-LSTM decoder (`scripts/output_yol2_hybrid_decoder.py`)
+
+Substrate (frozen) → 1024-d feature → 2-layer LSTM (256 hidden,
+2.17M params, 8.7 MB) → char-by-char patch generation. CPU üzerinde
+4 epoch × ~90s eğitim.
+
+```
+ep1  train_loss=2.094  eval_loss=1.324
+ep2  train_loss=1.168  eval_loss=1.016
+ep3  train_loss=0.960  eval_loss=0.897
+ep4  train_loss=0.857  eval_loss=0.830
+
+char-level greedy accuracy: 0.131  (random=0.008, 16× chance)
+substrate fingerprint stable: True  (bc8671e1…aa5e3c44)
+```
+
+Sample (held-out):
+```
+REFERENCE: 'iff --git a/research/slim/nets/nasnet/nasnet_utils.py …'
+GENERATED: 'iff --git a/src/prefect/utils/tensors/ray.py b/numpy/lib/function_base.py
+            --- a/conda/compose/client.py
+            +++ b/docs/circuit/dag.py
+            @@ -273,6 +273,12 @@ Reshaping_refered, urling empty in not the tappli'
+```
+
+**Verdict:** Hybrid **TEXT-EMISSION CAPABILITY** kanıtladı — valid diff
+syntax, gerçek görünüşlü file path, gerçek görünüşlü Python ifadeleri.
+Bu **issue-correct patch generation DEĞİL** — sadece "decoder bir
+patch şekli üretebiliyor" demek. Generated paths corpus'tan random
+karışık (prefect+conda+qiskit aynı patch'te).
+Architect'in dürüst ayrımı: text-emission ≠ task-correct generation.
+
+**Düzeltilmiş gerçek koşu (true argmax greedy, architect uyarısı sonrası):**
+- char-level accuracy: **0.156** (random 1/128 = 0.008 → ~20× over chance)
+- char_set_recall (inventory overlap): **0.762** — bu **token/BLEU
+  değil**, sadece benzersiz karakter ID setlerinin Jaccard-recall'u.
+  ASCII patch'leri zaten ~95 printable karakter içerdiği için bu metrik
+  doğal olarak 0.7-0.9 bandında olur, KAPASİTE göstergesi değildir
+  (architect 2. tur uyarısı: "rename + downplay").
+- substrate fingerprint stable: True (frozen kanıtlandı)
+- Dürüst yorum: yüksek **karakter envanter** örtüşmesi + düşük
+  **konumsal doğruluk**. Bunu "hangi kelimeleri kullanır biliyor"
+  diye okumak fazlaya kaçar — sadece "diff/python ASCII inventory'sini
+  taklit ediyor" demek. Sırasal-duyarlı metrik (CER/edit-distance)
+  eklemek ileride gerekli; şu an char-acc 0.156 tek güvenilir sayı.
+
+Önceki rapor edilen 0.131 sampling sonucuydu (`torch.multinomial`
+temp=0.7) — "greedy" yanlış etiketlenmişti. Şimdi tam argmax kullanılıyor.
+
+Mimari iddia: substrate frozen kaldı, decoder backprop'lu — yani
+"non-LLM substrate" iddiası encoder tarafında geçerli. Decoder klasik
+LSTM. Hybrid hikayesini dürüstçe satabilir.
+
+#### Yol 3 — PURE substrate text recall (`scripts/output_yol3_recall_text.py`)
+
+64×64 grid, 5 string × 32 byte (256 bit yoğunluk). Store, corrupt,
+recall, decode bit→text.
+
+```
+drop=0.0:  bit_acc=0.60-0.68  byte_acc=0.00-0.09
+drop=0.5:  bit_acc=0.55-0.61  byte_acc=0.00
+```
+
+Recalled output Unicode bozuğu (`'··T�·P·P�···����eIU�JUMRڦ�V…'`).
+
+**Verdict:** PURE substrate text üretmiyor. PatternMemory sparse
+low-density pattern için yapılmış (~1-3% density), text bitmap
+yoğun (~50% density) — recall corruption olmasa bile temizleyemiyor.
+Saf substrate'in generative kabiliyeti = sıfır.
+
+#### Net karşılaştırma
+
+| yol | gerçek output? | kalite | "non-LLM" saflık | öneri |
+|-----|----------------|--------|-------------------|-------|
+| Yol 1 retrieval | EVET (verbatim) | düşük novel'da, refuse iyi çalışıyor | TAM (substrate dokunulmadı) | demo için kullanılabilir |
+| Yol 2 hybrid    | EVET (gerçek üretim) | char-acc 16× chance, syntax-doğru muhteva-yanlış | YARIM (encoder frozen, decoder backprop) | **gerçek output isteniyorsa tek yol bu** |
+| Yol 3 pure recall | HAYIR (gibberish) | sıfır | TAM | reddedilmeli, PatternMemory bu iş için yapılmamış |
+
+**Tek satır özet:** Eğer "gerçek üretim" şart ise → **Yol 2**.
+"Saf non-LLM" şart ise → Yol 1 (kopyala-getir, ama refuse oranı yüksek).
+İkisi de değil → mimari output üretmiyor, sadece classify/retrieve ediyor.
