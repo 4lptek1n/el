@@ -1659,7 +1659,51 @@ Saf substrate'in generative kabiliyeti = sıfır.
 | Yol 1 retrieval | EVET (verbatim) | düşük novel'da, refuse iyi çalışıyor | TAM (substrate dokunulmadı) | demo için kullanılabilir |
 | Yol 2 hybrid    | EVET (gerçek üretim) | char-acc 16× chance, syntax-doğru muhteva-yanlış | YARIM (encoder frozen, decoder backprop) | **gerçek output isteniyorsa tek yol bu** |
 | Yol 3 pure recall | HAYIR (gibberish) | sıfır | TAM | reddedilmeli, PatternMemory bu iş için yapılmamış |
+| Yol 4 attractor | HAYIR (1.23× random, freq prior'a 13× kayıp) | yetersiz | TAM (Hebb + relax) | substrate'in mimari sınırı, aşağıda detay |
 
 **Tek satır özet:** Eğer "gerçek üretim" şart ise → **Yol 2**.
 "Saf non-LLM" şart ise → Yol 1 (kopyala-getir, ama refuse oranı yüksek).
 İkisi de değil → mimari output üretmiyor, sadece classify/retrieve ediyor.
+
+#### Yol 4 — ATTRACTOR-BASED ASSOCIATIVE GENERATION (HONEST NEGATIVE)
+
+(`scripts/output_yol4_attractor.py`)
+
+**Hedef:** Substrate'in kullanılmamış %70'ini (Hopfield-style associative
+completion via field dynamics) test et. Hiç decoder yok, hiç backprop yok
+— sadece (issue, patch) çiftlerini joint pattern olarak Hebb ile imprint
+et, eval'da sadece issue cue'sunu enjekte et, field dinamiklerini koştur,
+patch zonundan completion oku.
+
+**3 koşu, 3 senaryo, hepsi negatif:**
+
+| varyant | encoding | C_mean sonrası | substrate jaccard | random | freq | retrieve |
+|---------|----------|----------------|-------------------|--------|------|----------|
+| zonal, low-decay  | top/bot half ayrı | **0.978 (saturated!)** | 0.022 | 0.020 | 0.321 | 0.305 |
+| zonal, high-decay | aynı, decay=0.05 | **0.050 (collapsed)** | 0.014 | 0.014 | 0.316 | 0.281 |
+| **interleaved** (parity sublattice) + sweet-spot decay | issue/patch hücreleri komşu | 0.078 (sağlıklı) | **0.019** | 0.015 | 0.238 | 0.273 |
+
+**Lift vs random: 1.12× → 0.98× → 1.23×.** Sweet-spot tuning ile bile
+substrate **frequency-prior baseline'ının 13× ALTINDA kalıyor** (0.019
+vs 0.238). Yani "patch zonunun en sık aktive olan hash pozisyonlarını
+sabit dön" stratejisi, substrate'in tüm Hebb dinamiğinden 13 kat daha
+iyi çalışıyor.
+
+**Mimari teşhis (asıl bulgu):** Hopfield associative memory için
+**full connectivity** gerekir — her hücre her hücreye bağlı olmalı ki
+arbitrary association öğrenilebilsin. Bizim substrate **2D
+nearest-neighbor** — bir hücre sadece 4 komşusuyla C-edge paylaşıyor.
+Cross-zone bilgi akışı tek bir kenar satırından sızmak zorunda
+(zonal'da) veya O(grid) adım yayılmak zorunda (interleaved'da). Bu
+bant genişliği arbitrary issue→patch binding için yeterli değil.
+
+**Sonuç (kesin ve dürüst):** Substrate **knowledge memory + classifier**
+olarak frontier seviyede başarılı (multitask 99%, persistence saturasyon
+limitine kadar, capacity 224² N=256→0.999). Ama **non-LLM associative
+generator** olarak Hebb-on-2D-grid mimari sınırına çarpıyor. Kızıl elma
+"backprop'suz, decoder'sız, full non-LLM üretim" hedefi **bu mimaride
+ulaşılamaz** — Hopfield'i istiyorsan full-connectivity'ye gitmek
+gerekir, o da artık 2D thermofield değil.
+
+Bu negatif bulgu pozitif bilgidir: substrate'in fonksiyonel sınırı
+artık tanımlı. Yarınki yol haritası için kritik.
